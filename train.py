@@ -10,6 +10,7 @@
 "Alias-Free Generative Adversarial Networks"."""
 
 import os
+import copy
 import click
 import re
 import json
@@ -21,6 +22,15 @@ from training import training_loop
 from metrics import metric_main
 from torch_utils import training_stats
 from torch_utils import custom_ops
+
+#----------------------------------------------------------------------------
+
+def load_project(sf_kwargs):
+    import slideflow as sf
+    dataset_kwargs = {k:v for k,v in sf_kwargs.items() if k in ('tile_px', 'tile_um', 'filters', 'filter_blank')}
+    project = sf.Project(sf_kwargs['project_path'])
+    dataset = project.dataset(**dataset_kwargs)
+    return project, dataset
 
 #----------------------------------------------------------------------------
 
@@ -62,20 +72,38 @@ def launch_training(c, desc, outdir, dry_run):
     assert not os.path.exists(c.run_dir)
 
     # Print options.
+    if hasattr(c, 'slideflow_kwargs'):
+        c_for_print = copy.deepcopy(c)
+        c_for_print.training_set_kwargs.tfrecords = '[...]'
+        c_for_print.training_set_kwargs.labels = '[...]'
+    else:
+        c_for_print = c
+
     print()
     print('Training options:')
-    print(json.dumps(c, indent=2))
+    print(json.dumps(c_for_print, indent=2))
     print()
     print(f'Output directory:    {c.run_dir}')
     print(f'Number of GPUs:      {c.num_gpus}')
     print(f'Batch size:          {c.batch_size} images')
     print(f'Training duration:   {c.total_kimg} kimg')
-    print(f'Dataset path:        {c.training_set_kwargs.path}')
+    if hasattr(c, 'slideflow_kwargs'):
+        print(f'Slideflow project:   {c.slideflow_kwargs.project_path}')
+    else:
+        print(f'Dataset path:        {c.training_set_kwargs.path}')
     print(f'Dataset size:        {c.training_set_kwargs.max_size} images')
     print(f'Dataset resolution:  {c.training_set_kwargs.resolution}')
     print(f'Dataset labels:      {c.training_set_kwargs.use_labels}')
     print(f'Dataset x-flips:     {c.training_set_kwargs.xflip}')
     print()
+
+    # Prepare slideflow dataset
+    if hasattr(c, 'slideflow_kwargs'):
+        print('Slideflow options:')
+        print(json.dumps(c.slideflow_kwargs, indent=2))
+        print('Setting up TFRecord indices...')
+        project, dataset = load_project(c.slideflow_kwargs)
+        dataset.build_index(False)
 
     # Dry run?
     if dry_run:
@@ -90,7 +118,11 @@ def launch_training(c, desc, outdir, dry_run):
 
     # Launch processes.
     print('Launching processes...')
-    torch.multiprocessing.set_start_method('spawn')
+    try:
+        torch.multiprocessing.set_start_method('spawn')
+    except RuntimeError as e:
+        if not hasattr(c, 'slideflow_kwargs'):
+            raise e
     with tempfile.TemporaryDirectory() as temp_dir:
         if c.num_gpus == 1:
             subprocess_fn(rank=0, c=c, temp_dir=temp_dir)
@@ -110,6 +142,52 @@ def init_dataset_kwargs(data):
     except IOError as err:
         raise click.ClickException(f'--data: {err}')
 
+
+def init_slideflow_kwargs(path):
+    try:
+        with open(path, 'r') as sf_args_f:
+            slideflow_kwargs = dnnlib.EasyDict(**json.load(sf_args_f))
+    except IOError as err:
+        raise click.ClickException(f'--slideflow: {err}')
+    if slideflow_kwargs.model_type not in ('categorical', 'linear'):
+        raise click.ClickException(f'Unknown slideflow model type {slideflow_kwargs.model_type}, must be "categorical" or "linear"')
+    if slideflow_kwargs.model_type == 'linear':
+        raise ValueError("Unsupported outcome type for conditional network: linear")
+    project, dataset = load_project(slideflow_kwargs)
+    outcome_key = 'outcomes' if 'outcomes' in slideflow_kwargs else 'outcome_label_headers'
+    if slideflow_kwargs[outcome_key] is not None:
+        labels, _ = dataset.labels(slideflow_kwargs[outcome_key], use_float=(slideflow_kwargs['model_type'] != 'categorical'))
+    else:
+        labels = None
+
+    if 'loc_labels' in slideflow_kwargs:
+        label_kwargs = dict(
+            class_name='slideflow.io.torch.LocLabelInterleaver',
+            loc_labels=slideflow_kwargs['loc_labels'],
+            labels=None,
+        )
+    else:
+        label_kwargs = dict(
+            class_name='slideflow.io.torch.StyleGAN2Interleaver',
+            labels=labels,
+        )
+
+    training_set_kwargs = dnnlib.EasyDict(tfrecords=dataset.tfrecords(),
+                                          img_size=slideflow_kwargs['tile_px'],
+                                          use_labels=(labels is not None),
+                                          chunk_size=4,
+                                          augment='xyr',
+                                          standardize=False,
+                                          num_tiles=dataset.num_tiles,
+                                          prob_weights=dataset.prob_weights,
+                                          model_type=slideflow_kwargs['model_type'],
+                                          onehot=True,
+                                          **label_kwargs)
+    training_set_kwargs.resolution = slideflow_kwargs.tile_px
+    training_set_kwargs.use_labels = (labels is not None)
+    training_set_kwargs.max_size = None
+    return training_set_kwargs, slideflow_kwargs, project.name
+
 #----------------------------------------------------------------------------
 
 def parse_comma_separated_list(s):
@@ -126,7 +204,7 @@ def parse_comma_separated_list(s):
 # Required.
 @click.option('--outdir',       help='Where to save the results', metavar='DIR',                required=True)
 @click.option('--cfg',          help='Base configuration',                                      type=click.Choice(['stylegan3-t', 'stylegan3-r', 'stylegan2']), required=True)
-@click.option('--data',         help='Training data', metavar='[ZIP|DIR]',                      type=str, required=True)
+@click.option('--data',         help='Training data', metavar='[ZIP|DIR]',                      type=str, required=False)
 @click.option('--gpus',         help='Number of GPUs to use', metavar='INT',                    type=click.IntRange(min=1), required=True)
 @click.option('--batch',        help='Total batch size', metavar='INT',                         type=click.IntRange(min=1), required=True)
 @click.option('--gamma',        help='R1 regularization weight', metavar='FLOAT',               type=click.FloatRange(min=0), required=True)
@@ -160,6 +238,10 @@ def parse_comma_separated_list(s):
 @click.option('--nobench',      help='Disable cuDNN benchmarking', metavar='BOOL',              type=bool, default=False, show_default=True)
 @click.option('--workers',      help='DataLoader worker processes', metavar='INT',              type=click.IntRange(min=1), default=3, show_default=True)
 @click.option('-n','--dry-run', help='Print training options and exit',                         is_flag=True)
+
+# Slideflow settings.
+@click.option('--slideflow',    help='Slideflow configuration (JSON)', metavar='PATH',          type=str, required=False)
+@click.option('--lazy-resume',  help='Allow lazy resuming from saved networks',                 type=bool, metavar='BOOL')
 
 def main(**kwargs):
     """Train a GAN using the techniques described in the paper
@@ -195,7 +277,12 @@ def main(**kwargs):
     c.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, prefetch_factor=2)
 
     # Training set.
-    c.training_set_kwargs, dataset_name = init_dataset_kwargs(data=opts.data)
+    if opts.slideflow:
+        c.training_set_kwargs, c.slideflow_kwargs, dataset_name = init_slideflow_kwargs(path=opts.slideflow)
+    else:
+        if opts.data is None:
+            click.ClickException('--data required when not using a Slideflow dataset')
+        c.training_set_kwargs, dataset_name = init_dataset_kwargs(data=opts.data)
     if opts.cond and not c.training_set_kwargs.use_labels:
         raise click.ClickException('--cond=True requires labels specified in dataset.json')
     c.training_set_kwargs.use_labels = opts.cond
@@ -217,8 +304,13 @@ def main(**kwargs):
     c.total_kimg = opts.kimg
     c.kimg_per_tick = opts.tick
     c.image_snapshot_ticks = c.network_snapshot_ticks = opts.snap
-    c.random_seed = c.training_set_kwargs.random_seed = opts.seed
+    c.random_seed = opts.seed
+    if not opts.slideflow:
+        c.training_set_kwargs.random_seed = opts.seed
     c.data_loader_kwargs.num_workers = opts.workers
+
+    # Lazy resume.
+    c.lazy_resume = bool(opts.lazy_resume)
 
     # Sanity checks.
     if c.batch_size % c.num_gpus != 0:

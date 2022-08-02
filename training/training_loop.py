@@ -18,6 +18,7 @@ import PIL.Image
 import numpy as np
 import torch
 import dnnlib
+import random
 from torch_utils import misc
 from torch_utils import training_stats
 from torch_utils.ops import conv2d_gradfix
@@ -28,12 +29,24 @@ from metrics import metric_main
 
 #----------------------------------------------------------------------------
 
-def setup_snapshot_image_grid(training_set, random_seed=0):
+def setup_snapshot_image_grid_iterator(training_set, training_set_iterator):
+    gw = np.clip(7680 // training_set.image_shape[2], 7, 32)
+    gh = np.clip(4320 // training_set.image_shape[1], 4, 32)
+    batch_size = next(training_set_iterator)[0].shape[0]
+    num_to_take = ((gw * gh) // batch_size) + 1
+    images, labels = zip(*[next(training_set_iterator) for i in range(num_to_take)])
+    stacked_images = np.stack(np.concatenate(images, axis=0)[:gw * gh])
+    stacked_labels = np.stack(np.concatenate(labels, axis=0)[:gw * gh])
+    return (gw, gh), stacked_images, stacked_labels
+
+def setup_snapshot_image_grid(training_set, random_seed=0, training_set_iterator=None):
     rnd = np.random.RandomState(random_seed)
     gw = np.clip(7680 // training_set.image_shape[2], 7, 32)
     gh = np.clip(4320 // training_set.image_shape[1], 4, 32)
 
     # No labels => show random subset of training samples.
+    if not hasattr(training_set, '__len__'):
+        return setup_snapshot_image_grid_iterator(training_set, training_set_iterator)
     if not training_set.has_labels:
         all_indices = list(range(len(training_set)))
         rnd.shuffle(all_indices)
@@ -90,6 +103,7 @@ def save_image_grid(img, fname, drange, grid_size):
 def training_loop(
     run_dir                 = '.',      # Output directory.
     training_set_kwargs     = {},       # Options for training set.
+    slideflow_kwargs        = {},       # Options for SlideflowIterator.
     data_loader_kwargs      = {},       # Options for torch.utils.data.DataLoader.
     G_kwargs                = {},       # Options for generator network.
     D_kwargs                = {},       # Options for discriminator network.
@@ -120,11 +134,13 @@ def training_loop(
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
+    lazy_resume             = False,    # If True, will ignore errors raised from inability to copy Tensors from pretraining.
 ):
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
     np.random.seed(random_seed * num_gpus + rank)
+    random.seed(random_seed)
     torch.manual_seed(random_seed * num_gpus + rank)
     torch.backends.cudnn.benchmark = cudnn_benchmark    # Improves training speed.
     torch.backends.cuda.matmul.allow_tf32 = False       # Improves numerical accuracy.
@@ -135,12 +151,23 @@ def training_loop(
     # Load training set.
     if rank == 0:
         print('Loading training set...')
-    training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training.dataset.Dataset
-    training_set_sampler = misc.InfiniteSampler(dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed)
-    training_set_iterator = iter(torch.utils.data.DataLoader(dataset=training_set, sampler=training_set_sampler, batch_size=batch_size//num_gpus, **data_loader_kwargs))
+    if 'slideflow' in training_set_kwargs.class_name:
+        training_set_kwargs['augment'] = 'xyr'
+        training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs)
+        training_set_iterator = iter(torch.utils.data.DataLoader(training_set, batch_size=batch_size//num_gpus, **data_loader_kwargs))
+    else:
+        training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training.dataset.Dataset
+        training_set_sampler = misc.InfiniteSampler(dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed)
+        training_set_iterator = iter(torch.utils.data.DataLoader(dataset=training_set, sampler=training_set_sampler, batch_size=batch_size//num_gpus, **data_loader_kwargs))
+
+    if hasattr(training_set, '__len__'):
+        training_set_len = len(training_set)
+    else:
+        training_set_len = training_set.num_tiles
+
     if rank == 0:
         print()
-        print('Num images: ', len(training_set))
+        print('Num images: ', training_set_len)
         print('Image shape:', training_set.image_shape)
         print('Label shape:', training_set.label_shape)
         print()
@@ -159,7 +186,7 @@ def training_loop(
         with dnnlib.util.open_url(resume_pkl) as f:
             resume_data = legacy.load_network_pkl(f)
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
-            misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
+            misc.copy_params_and_buffers(resume_data[name], module, require_all=False, lazy_resume=lazy_resume)
 
     # Print network summary tables.
     if rank == 0:
@@ -217,7 +244,7 @@ def training_loop(
     grid_c = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set)
+        grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set, training_set_iterator=training_set_iterator)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
@@ -260,7 +287,7 @@ def training_loop(
             phase_real_c = phase_real_c.to(device).split(batch_gpu)
             all_gen_z = torch.randn([len(phases) * batch_size, G.z_dim], device=device)
             all_gen_z = [phase_gen_z.split(batch_gpu) for phase_gen_z in all_gen_z.split(batch_size)]
-            all_gen_c = [training_set.get_label(np.random.randint(len(training_set))) for _ in range(len(phases) * batch_size)]
+            all_gen_c = [training_set.get_label(np.random.randint(training_set_len)) for _ in range(len(phases) * batch_size)]
             all_gen_c = torch.from_numpy(np.stack(all_gen_c)).pin_memory().to(device)
             all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
 
@@ -378,7 +405,8 @@ def training_loop(
                 print('Evaluating metrics...')
             for metric in metrics:
                 result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
+                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,
+                    slideflow_kwargs=slideflow_kwargs)
                 if rank == 0:
                     metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
                 stats_metrics.update(result_dict.results)
