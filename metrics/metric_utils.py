@@ -16,21 +16,23 @@ import copy
 import uuid
 import numpy as np
 import torch
-import dnnlib
+
+from .. import dnnlib
 
 #----------------------------------------------------------------------------
 
 class MetricOptions:
-    def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, num_gpus=1, rank=0, device=None, progress=None, cache=True):
+    def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, slideflow_kwargs={}, num_gpus=1, rank=0, device=None, progress=None, cache=True):
         assert 0 <= rank < num_gpus
-        self.G              = G
-        self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
-        self.dataset_kwargs = dnnlib.EasyDict(dataset_kwargs)
-        self.num_gpus       = num_gpus
-        self.rank           = rank
-        self.device         = device if device is not None else torch.device('cuda', rank)
-        self.progress       = progress.sub() if progress is not None and rank == 0 else ProgressMonitor()
-        self.cache          = cache
+        self.G                  = G
+        self.G_kwargs           = dnnlib.EasyDict(G_kwargs)
+        self.dataset_kwargs     = dnnlib.EasyDict(dataset_kwargs)
+        self.slideflow_kwargs   = dnnlib.EasyDict(slideflow_kwargs)
+        self.num_gpus           = num_gpus
+        self.rank               = rank
+        self.device             = device if device is not None else torch.device('cuda', rank)
+        self.progress           = progress.sub() if progress is not None and rank == 0 else ProgressMonitor()
+        self.cache              = cache
 
 #----------------------------------------------------------------------------
 
@@ -54,15 +56,26 @@ def get_feature_detector(url, device=torch.device('cpu'), num_gpus=1, rank=0, ve
 
 #----------------------------------------------------------------------------
 
-def iterate_random_labels(opts, batch_size):
+def iterate_random_labels(opts, batch_size, stats):
     if opts.G.c_dim == 0:
         c = torch.zeros([batch_size, opts.G.c_dim], device=opts.device)
         while True:
             yield c
     else:
-        dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+        if 'slideflow' in opts.dataset_kwargs.class_name:
+            slideflow_kwargs = {k:v for k,v in opts.slideflow_kwargs.items() if k not in ('model_type',)}
+            dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs,
+                                                        **slideflow_kwargs,
+                                                        rank=opts.rank,
+                                                        num_replicas=opts.num_gpus,
+                                                        infinite=False) # subclass of training.dataset.Dataset
+            dataset_len = dataset.num_tiles
+            dataset.max_size = stats.max_items
+        else:
+            dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+            dataset_len = len(dataset)
         while True:
-            c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_size)]
+            c = [dataset.get_label(np.random.randint(dataset_len)) for _i in range(batch_size)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
             yield c
 
@@ -194,9 +207,15 @@ class ProgressMonitor:
 #----------------------------------------------------------------------------
 
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
-    dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+    if 'slideflow' in opts.dataset_kwargs.class_name:
+        #TODO: Not sure if the seed needs to be re-applied here, should investigate
+        num_workers = 1
+        dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs, rank=opts.rank, num_replicas=opts.num_gpus, infinite=False) # subclass of training.dataset.Dataset
+    else:
+        num_workers = 3
+        dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
     if data_loader_kwargs is None:
-        data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
+        data_loader_kwargs = dict(pin_memory=True, num_workers=num_workers, prefetch_factor=2)
 
     # Try to lookup from cache.
     cache_file = None
@@ -219,16 +238,26 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
             return FeatureStats.load(cache_file)
 
     # Initialize.
-    num_items = len(dataset)
-    if max_items is not None:
-        num_items = min(num_items, max_items)
+    if hasattr(dataset, '__len__'):
+        num_items = len(dataset)
+        if max_items is not None:
+            num_items = min(num_items, max_items)
+    else:
+        num_items = dataset.num_tiles
+        if max_items is not None:
+            num_items = min(num_items, max_items)
+            dataset.max_size = max_items
     stats = FeatureStats(max_items=num_items, **stats_kwargs)
     progress = opts.progress.sub(tag='dataset features', num_items=num_items, rel_lo=rel_lo, rel_hi=rel_hi)
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
 
     # Main loop.
-    item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
-    for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
+    if 'slideflow' in opts.dataset_kwargs.class_name:
+        item_subset = None
+    else:
+        item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
+    dataset_iter = iter(torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs))
+    for images, _labels in dataset_iter:
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         features = detector(images.to(opts.device), **detector_kwargs)
@@ -252,7 +281,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Setup generator and labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
-    c_iter = iterate_random_labels(opts=opts, batch_size=batch_gen)
+    c_iter = iterate_random_labels(opts=opts, batch_size=batch_gen, stats=stats)
 
     # Initialize.
     stats = FeatureStats(**stats_kwargs)

@@ -14,14 +14,13 @@ import re
 from typing import List, Optional, Tuple, Union
 
 import click
-import dnnlib
 import imageio
 import numpy as np
 import scipy.interpolate
 import torch
 from tqdm import tqdm
 
-import legacy
+from . import dnnlib, legacy
 
 #----------------------------------------------------------------------------
 

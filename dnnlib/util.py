@@ -32,7 +32,6 @@ import uuid
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
 
-
 # Util classes
 # ------------------------------------------------------------------------------------------
 
@@ -248,10 +247,13 @@ def get_module_from_obj_name(obj_name: str) -> Tuple[types.ModuleType, str]:
     # try each alternative in turn
     for module_name, local_obj_name in name_pairs:
         try:
-            module = importlib.import_module(module_name) # may raise ImportError
+            if module_name == 'training':
+                from .. import training as module
+            else:
+                module = importlib.import_module(module_name) # may raise ImportError
             get_obj_from_module(module, local_obj_name) # may raise AttributeError
             return module, local_obj_name
-        except:
+        except Exception as e:
             pass
 
     # maybe some of the modules themselves contain errors?

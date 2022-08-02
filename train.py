@@ -16,12 +16,13 @@ import re
 import json
 import tempfile
 import torch
+from typing import Optional, Union, List
 
-import dnnlib
-from training import training_loop
-from metrics import metric_main
-from torch_utils import training_stats
-from torch_utils import custom_ops
+from . import dnnlib
+from .training import training_loop
+from .metrics import metric_main
+from .torch_utils import training_stats
+from .torch_utils import custom_ops
 
 #----------------------------------------------------------------------------
 
@@ -199,6 +200,44 @@ def parse_comma_separated_list(s):
 
 #----------------------------------------------------------------------------
 
+def default_kwargs(
+    outdir: str,
+    cfg: str,
+    data: Optional[str] = None,
+    gpus: int = 1,
+    batch: int = 32,
+    gamma: float = 8.2,
+    cond: bool = False,
+    mirror: bool = False,
+    aug: str = 'ada',
+    resume: Optional[str] = None,
+    freezed: int = 0,
+    p: float = 0.2,
+    target: float = 0.6,
+    batch_gpu: Optional[int] = None,
+    cbase: int = 32768,
+    cmax: int = 512,
+    glr: Optional[float] = None,
+    dlr: Optional[float] = 0.002,
+    map_depth: Optional[int] = None,
+    mbstd_group: int = 4,
+    desc: Optional[str] = None,
+    metrics: Optional[Union[List, List[str]]] = None,
+    kimg: int = 25000,
+    tick: int = 4,
+    snap: int = 50,
+    seed: int = 0,
+    fp32: bool = False,
+    nobench: bool = False,
+    workers: int = 3,
+    dry_run: bool = False,
+    slideflow: Optional[str] = None,
+    lazy_resume: bool = False
+):
+    return dict(locals())
+
+#----------------------------------------------------------------------------
+
 @click.command()
 
 # Required.
@@ -265,8 +304,11 @@ def main(**kwargs):
     python train.py --outdir=~/training-runs --cfg=stylegan2 --data=~/datasets/ffhq-1024x1024.zip \\
         --gpus=8 --batch=32 --gamma=10 --mirror=1 --aug=noaug
     """
+    train(**kwargs)
 
+def train(ctx=None, **kwargs):
     # Initialize config.
+    kwargs = default_kwargs(**kwargs)
     opts = dnnlib.EasyDict(kwargs) # Command line arguments.
     c = dnnlib.EasyDict() # Main config dict.
     c.G_kwargs = dnnlib.EasyDict(class_name=None, z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict())
@@ -300,7 +342,7 @@ def main(**kwargs):
     c.loss_kwargs.r1_gamma = opts.gamma
     c.G_opt_kwargs.lr = (0.002 if opts.cfg == 'stylegan2' else 0.0025) if opts.glr is None else opts.glr
     c.D_opt_kwargs.lr = opts.dlr
-    c.metrics = opts.metrics
+    c.metrics = opts.metrics if opts.metrics is not None else []
     c.total_kimg = opts.kimg
     c.kimg_per_tick = opts.tick
     c.image_snapshot_ticks = c.network_snapshot_ticks = opts.snap
