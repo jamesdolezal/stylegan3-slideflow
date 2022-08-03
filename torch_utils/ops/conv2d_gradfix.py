@@ -22,6 +22,7 @@ from pkg_resources import parse_version
 enabled = False                     # Enable the custom op by setting this to true.
 weight_gradients_disabled = False   # Forcefully disable computation of gradients with respect to the weights.
 _use_pytorch_1_11_api = parse_version(torch.__version__) >= parse_version('1.11.0a') # Allow prerelease builds of 1.11
+_use_pytorch_1_12_api = parse_version(torch.__version__) >= parse_version('1.12') # Allow PyTorch 1.12
 
 @contextlib.contextmanager
 def no_weight_gradients(disable=True):
@@ -175,7 +176,11 @@ def _conv2d_gradfix(transpose, weight_shape, stride, padding, output_padding, di
             # General case => cuDNN.
             name = 'aten::cudnn_convolution_transpose_backward_weight' if transpose else 'aten::cudnn_convolution_backward_weight'
             flags = [torch.backends.cudnn.benchmark, torch.backends.cudnn.deterministic, torch.backends.cudnn.allow_tf32]
-            return torch._C._jit_get_operation(name)(weight_shape, grad_output, input, padding, stride, dilation, groups, *flags)
+            op = torch._C._jit_get_operation(name)(weight_shape, grad_output, input, padding, stride, dilation, groups, *flags)
+            if _use_pytorch_1_12_api:
+                return op[0]
+            else:
+                return op
 
         @staticmethod
         def backward(ctx, grad2_grad_weight):
