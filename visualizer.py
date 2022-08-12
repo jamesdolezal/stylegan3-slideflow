@@ -26,7 +26,11 @@ from viz import capture_widget
 from viz import layer_widget
 from viz import equivariance_widget
 
-from . import dnnlib
+try:
+    from . import dnnlib
+except ImportError:
+    # Error occurs when running script in StyleGAN3 directory
+    import dnnlib
 
 #----------------------------------------------------------------------------
 

@@ -16,8 +16,13 @@ import copy
 import numpy as np
 import torch
 
-from . import dnnlib
-from .torch_utils import misc
+try:
+    from . import dnnlib
+    from .torch_utils import misc
+except ImportError:
+    # Error occurs when running script in StyleGAN3 directory
+    import dnnlib
+    from torch_utils import misc
 
 #----------------------------------------------------------------------------
 
@@ -66,8 +71,12 @@ class _TFNetworkStub(dnnlib.EasyDict):
 
 class _LegacyUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
-        from . import dnnlib, torch_utils
-        from .dnnlib import util
+        try:
+            from . import dnnlib, torch_utils
+            from .dnnlib import util
+        except ImportError:
+            import dnnlib, torch_utils
+            from dnnlib import util
         sys.modules['torch_utils'] = torch_utils
         sys.modules['dnnlib'] = dnnlib
         sys.modules['dnnlib.util'] = dnnlib.util

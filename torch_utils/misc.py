@@ -11,7 +11,12 @@ import contextlib
 import numpy as np
 import torch
 import warnings
-from .. import dnnlib
+
+try:
+    from .. import dnnlib
+except ImportError:
+    # Error occurs when running script in StyleGAN3 directory
+    import dnnlib
 
 #----------------------------------------------------------------------------
 # Cached construction of constant tensors. Avoids CPU=>GPU copy when the
