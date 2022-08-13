@@ -132,6 +132,8 @@ class Renderer:
         self._start_event   = torch.cuda.Event(enable_timing=True)
         self._end_event     = torch.cuda.Event(enable_timing=True)
         self._net_layers    = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
+        self._uq_thread     = None
+        self._stop_thread   = False
 
     def render(self, **args):
         self._is_timing = True
@@ -226,6 +228,47 @@ class Renderer:
         x = torch.nn.functional.embedding(x, cmap)
         return x
 
+    def _calc_uncertainty(self, img):
+        import threading
+        import tensorflow as tf
+
+        self._visualizer._uncertainty = None
+        if self._stop_thread and self._uq_thread is not None:
+            self._uq_thread.join()
+
+        def calc_uq(uq_n=30):
+            pred_fn = self._visualizer._classifier
+            for i in range(uq_n):
+                if self._stop_thread:
+                    return
+                yp = pred_fn(img, training=False)
+                if i == 0:
+                    num_outcomes = 1 if not isinstance(yp, list) else len(yp)
+                    yp_drop = {n: [] for n in range(num_outcomes)}
+                if num_outcomes > 1:
+                    for o in range(num_outcomes):
+                        yp_drop[o] += [yp[o]]
+                else:
+                    yp_drop[0] += [yp]
+            if num_outcomes > 1:
+                yp_drop = [tf.stack(yp_drop[n], axis=0) for n in range(num_outcomes)]
+                yp_mean = [tf.math.reduce_mean(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
+                yp_std = [tf.math.reduce_std(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
+                self._visualizer._uncertainty = [np.mean(s) for s in yp_std]
+            else:
+                yp_drop = tf.stack(yp_drop[0], axis=0)
+                yp_mean = tf.math.reduce_mean(yp_drop, axis=0)[0].numpy()
+                yp_std = tf.math.reduce_std(yp_drop, axis=0)[0].numpy()
+                self._visualizer._uncertainty = np.mean(yp_std)
+            print("UQ Predictions:", yp_mean)
+            print("UQ Uncertainty:", yp_std)
+            self._stop_thread = True
+
+        self._stop_thread = False
+        self._uq_thread = threading.Thread(target=calc_uq)
+        self._uq_thread.start()
+
+
     def _render_impl(self, res,
         pkl             = None,
         w0_seeds        = [[0, 1]],
@@ -250,6 +293,9 @@ class Renderer:
         input_transform = None,
         untransform     = False,
     ):
+        # Stop UQ thread if running.
+        self._stop_thread = True
+
         # Dig up network details.
         G = self.get_network(pkl, 'G_ema')
         res.img_resolution = G.img_resolution
@@ -288,7 +334,7 @@ class Renderer:
                 _class_idx = class_idx
             elif G.c_dim > 0:
                 all_cs[idx, rnd.randint(G.c_dim)] = 1
-                _class_idx = rnd.randint(G.c_dim)
+                _class_idx = "-"
             else:
                 _class_idx = None
 
@@ -298,7 +344,7 @@ class Renderer:
                 _mix_class_idx = mix_class
             elif G.c_dim > 0:
                 all_cs_mix[idx, rnd.randint(G.c_dim)] = 1
-                _mix_class_idx = rnd.randint(G.c_dim)
+                _mix_class_idx = "-"
             else:
                 _mix_class_idx = None
 
@@ -412,11 +458,17 @@ class Renderer:
                     resize_px=target_px)
                 img = torch.unsqueeze(img, dim=0)
             preds = self._visualizer._classifier(img)
+
+            # UQ --------------------------------------------------------------
+            if c.config is not None and c.config['hp']['uq']:
+                self._calc_uncertainty(img)
+            # -----------------------------------------------------------------
+
             if isinstance(preds, list):
                 preds = [p[0].numpy() for p in preds]
             else:
                 preds = preds[0].numpy()
-            self._visualizer.stylemix_widget.viz._predictions = preds
+            self._visualizer._predictions = preds
 
     @staticmethod
     def run_synthesis_net(net, *args, capture_layer=None, **kwargs): # => out, layers

@@ -48,6 +48,8 @@ class Visualizer(imgui_window.ImguiWindow):
         self._predictions       = None
         self._classifier        = classifier
         self._classifier_args   = classifier_args
+        self._gan_config        = None
+        self._uncertainty       = None
 
         # Widget interface.
         self.args               = dnnlib.EasyDict()
@@ -86,6 +88,11 @@ class Visualizer(imgui_window.ImguiWindow):
 
     def load_pickle(self, pkl, ignore_errors=False):
         self.pickle_widget.load(pkl, ignore_errors=ignore_errors)
+        try:
+            import slideflow as sf
+            self._gan_config = sf.util.get_gan_config(pkl)
+        except Exception:
+            self._gan_config = None
 
     def print_error(self, error):
         error = str(error)
@@ -315,7 +322,8 @@ def main(
             gan_px=gan_px,
             gan_um=gan_um,
             target_px=target_px,
-            target_um=target_um
+            target_um=target_um,
+            config=sf.util.get_model_config(classifier)
         )
         if sf.backend() == 'tensorflow':
             import tensorflow as tf
