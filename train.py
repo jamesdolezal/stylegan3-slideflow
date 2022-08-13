@@ -157,9 +157,15 @@ def init_slideflow_kwargs(path):
     project, dataset = load_project(slideflow_kwargs)
     outcome_key = 'outcomes' if 'outcomes' in slideflow_kwargs else 'outcome_label_headers'
     if slideflow_kwargs[outcome_key] is not None:
-        labels, _ = dataset.labels(slideflow_kwargs[outcome_key], use_float=(slideflow_kwargs['model_type'] != 'categorical'))
+        labels, unique = dataset.labels(slideflow_kwargs[outcome_key], use_float=(slideflow_kwargs['model_type'] != 'categorical'))
+        if slideflow_kwargs.model_type == 'categorical':
+            outcome_labels = dict(zip(range(len(unique)), unique))
+        else:
+            outcome_labels = None
     else:
         labels = None
+        outcome_labels = None
+    slideflow_kwargs.outcome_labels = outcome_labels
 
     if 'loc_labels' in slideflow_kwargs:
         label_kwargs = dict(
