@@ -18,6 +18,7 @@ class LatentWidget:
         self.viz        = viz
         self.latent     = dnnlib.EasyDict(x=0, y=0, anim=False, speed=0.25)
         self.latent_def = dnnlib.EasyDict(self.latent)
+        self.class_idx  = -1
         self.step_y     = 100
 
     def drag(self, dx, dy):
@@ -32,12 +33,12 @@ class LatentWidget:
             imgui.text('Latent')
             imgui.same_line(viz.label_w)
             seed = round(self.latent.x) + round(self.latent.y) * self.step_y
-            with imgui_utils.item_width(viz.font_size * 8):
-                changed, seed = imgui.input_int('##seed', seed)
+            with imgui_utils.item_width(viz.font_size * 3):
+                changed, seed = imgui.input_int('##seed', seed, step=0)
                 if changed:
                     self.latent.x = seed
                     self.latent.y = 0
-            imgui.same_line(viz.label_w + viz.font_size * 8 + viz.spacing)
+            imgui.same_line(viz.label_w + viz.font_size * 3 + viz.spacing)
             frac_x = self.latent.x - round(self.latent.x)
             frac_y = self.latent.y - round(self.latent.y)
             with imgui_utils.item_width(viz.font_size * 5):
@@ -45,10 +46,18 @@ class LatentWidget:
                 if changed:
                     self.latent.x += new_frac_x - frac_x
                     self.latent.y += new_frac_y - frac_y
-            imgui.same_line(viz.label_w + viz.font_size * 13 + viz.spacing * 2)
+            imgui.same_line(viz.label_w + viz.font_size * 8 + viz.spacing * 2)
             _clicked, dragging, dx, dy = imgui_utils.drag_button('Drag', width=viz.button_w)
             if dragging:
                 self.drag(dx, dy)
+
+
+            imgui.same_line(viz.label_w + viz.font_size * 8 + viz.spacing * 2 + viz.button_w + viz.spacing)
+            with imgui_utils.item_width(viz.font_size * 2):
+                _something, self.class_idx = imgui.input_int('Class', self.class_idx, step=0)
+                viz.args.class_idx = self.class_idx
+
+
             imgui.same_line(viz.label_w + viz.font_size * 13 + viz.button_w + viz.spacing * 3)
             _clicked, self.latent.anim = imgui.checkbox('Anim', self.latent.anim)
             imgui.same_line(round(viz.font_size * 27.7))

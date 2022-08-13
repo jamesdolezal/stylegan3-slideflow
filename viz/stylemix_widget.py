@@ -16,6 +16,7 @@ class StyleMixingWidget:
         self.viz        = viz
         self.seed_def   = 1000
         self.seed       = self.seed_def
+        self.mix_class  = -1
         self.animate    = False
         self.enables    = []
 
@@ -29,8 +30,14 @@ class StyleMixingWidget:
         if show:
             imgui.text('Stylemix')
             imgui.same_line(viz.label_w)
-            with imgui_utils.item_width(viz.font_size * 8), imgui_utils.grayed_out(num_ws == 0):
-                _changed, self.seed = imgui.input_int('##seed', self.seed)
+            with imgui_utils.item_width(viz.font_size * 3), imgui_utils.grayed_out(num_ws == 0):
+                _changed, self.seed = imgui.input_int('##seed', self.seed, step=0)
+
+            imgui.same_line(viz.label_w + viz.font_size * 3 + viz.spacing)
+            with imgui_utils.item_width(viz.font_size * 2), imgui_utils.grayed_out(num_ws == 0):
+                _something, self.mix_class = imgui.input_int('Class', self.mix_class, step=0)
+                viz.args.mix_class = self.mix_class
+
             imgui.same_line(viz.label_w + viz.font_size * 8 + viz.spacing)
             with imgui_utils.grayed_out(num_ws == 0):
                 _clicked, self.animate = imgui.checkbox('Anim', self.animate)

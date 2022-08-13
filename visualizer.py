@@ -25,6 +25,7 @@ from viz import performance_widget
 from viz import capture_widget
 from viz import layer_widget
 from viz import equivariance_widget
+from viz import prediction_widget
 
 try:
     from . import dnnlib
@@ -35,15 +36,18 @@ except ImportError:
 #----------------------------------------------------------------------------
 
 class Visualizer(imgui_window.ImguiWindow):
-    def __init__(self, capture_dir=None):
+    def __init__(self, capture_dir=None, classifier=None, classifier_args=None):
         super().__init__(title='GAN Visualizer', window_width=3840, window_height=2160)
 
         # Internals.
         self._last_error_print  = None
-        self._async_renderer    = AsyncRenderer()
+        self._async_renderer    = AsyncRenderer(self)
         self._defer_rendering   = 0
         self._tex_img           = None
         self._tex_obj           = None
+        self._predictions       = None
+        self._classifier        = classifier
+        self._classifier_args   = classifier_args
 
         # Widget interface.
         self.args               = dnnlib.EasyDict()
@@ -57,6 +61,7 @@ class Visualizer(imgui_window.ImguiWindow):
         self.latent_widget      = latent_widget.LatentWidget(self)
         self.stylemix_widget    = stylemix_widget.StyleMixingWidget(self)
         self.trunc_noise_widget = trunc_noise_widget.TruncationNoiseWidget(self)
+        self.prediction_widget  = prediction_widget.PredictionWidget(self)
         self.perf_widget        = performance_widget.PerformanceWidget(self)
         self.capture_widget     = capture_widget.CaptureWidget(self)
         self.layer_widget       = layer_widget.LayerWidget(self)
@@ -131,6 +136,7 @@ class Visualizer(imgui_window.ImguiWindow):
         self.latent_widget(expanded)
         self.stylemix_widget(expanded)
         self.trunc_noise_widget(expanded)
+        self.prediction_widget(expanded)
         expanded, _visible = imgui_utils.collapsing_header('Performance & capture', default=True)
         self.perf_widget(expanded)
         self.capture_widget(expanded)
@@ -181,7 +187,8 @@ class Visualizer(imgui_window.ImguiWindow):
 #----------------------------------------------------------------------------
 
 class AsyncRenderer:
-    def __init__(self):
+    def __init__(self, visualizer):
+        self._visualizer    = visualizer
         self._closed        = False
         self._is_async      = False
         self._cur_args      = None
@@ -231,7 +238,7 @@ class AsyncRenderer:
 
     def _set_args_sync(self, **args):
         if self._renderer_obj is None:
-            self._renderer_obj = renderer.Renderer()
+            self._renderer_obj = renderer.Renderer(self._visualizer)
         self._cur_result = self._renderer_obj.render(**args)
 
     def get_result(self):
@@ -272,16 +279,58 @@ class AsyncRenderer:
 @click.argument('pkls', metavar='PATH', nargs=-1)
 @click.option('--capture-dir', help='Where to save screenshot captures', metavar='PATH', default=None)
 @click.option('--browse-dir', help='Specify model path for the \'Browse...\' button', metavar='PATH')
+@click.option('--classifier', help='Classifier network for categorical predictions.', metavar='PATH')
+@click.option('--gan_um', help='Tile size in microns of GAN images', type=int)
+@click.option('--gan_px', help='Tile size in pixels of GAN images', type=int)
+@click.option('--target_um', help='Tile size in microns of target images', type=int)
+@click.option('--target_px', help='Tile size in pixels of target images', type=int)
 def main(
     pkls,
     capture_dir,
-    browse_dir
+    browse_dir,
+    classifier,
+    gan_um,
+    gan_px,
+    target_um,
+    target_px
 ):
     """Interactive model visualizer.
 
     Optional PATH argument can be used specify which .pkl file to load.
     """
-    viz = Visualizer(capture_dir=capture_dir)
+
+    if classifier is not None:
+        if None in (gan_um, gan_px, target_um, target_px):
+            raise click.ClickException("If supplying classifier, must also supply "
+                                       "gan_px, gan_um, target_px, target_um.")
+
+        import slideflow as sf
+        print("Classifier args:")
+        print("GAN px:    ", gan_px)
+        print("GAN um:    ", gan_um)
+        print("Target px: ", target_px)
+        print("Target um: ", target_um)
+        print("Loading classifier at {}...".format(classifier))
+        classifier_args = dnnlib.EasyDict(
+            gan_px=gan_px,
+            gan_um=gan_um,
+            target_px=target_px,
+            target_um=target_um
+        )
+        if sf.backend() == 'tensorflow':
+            import tensorflow as tf
+            physical_devices = tf.config.list_physical_devices('GPU')
+            for device in physical_devices:
+                tf.config.experimental.set_memory_growth(device, True)
+            model = tf.keras.models.load_model(classifier)
+        elif sf.backend() == 'torch':
+            import torch
+            model = torch.load(classifier)
+    else:
+        model = None
+        classifier_args = None
+
+    viz = Visualizer(capture_dir=capture_dir, classifier=model, classifier_args=classifier_args)
 
     if browse_dir is not None:
         viz.pickle_widget.search_dirs = [browse_dir]

@@ -18,6 +18,10 @@ import dnnlib
 from torch_utils.ops import upfirdn2d
 import legacy # pylint: disable=import-error
 
+from rich import print
+import slideflow as sf
+from slideflow.gan.utils import crop
+
 #----------------------------------------------------------------------------
 
 class CapturedException(Exception):
@@ -117,7 +121,8 @@ def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
 #----------------------------------------------------------------------------
 
 class Renderer:
-    def __init__(self):
+    def __init__(self, visualizer):
+        self._visualizer    = visualizer
         self._device        = torch.device('cuda')
         self._pkl_data      = dict()    # {pkl: dict | CapturedException, ...}
         self._networks      = dict()    # {cache_key: torch.nn.Module, ...}
@@ -226,6 +231,8 @@ class Renderer:
         w0_seeds        = [[0, 1]],
         stylemix_idx    = [],
         stylemix_seed   = 0,
+        class_idx       = None,
+        mix_class       = None,
         trunc_psi       = 1,
         trunc_cutoff    = 0,
         random_seed     = 0,
@@ -260,30 +267,65 @@ class Renderer:
                 res.error = CapturedException()
             G.synthesis.input.transform.copy_(torch.from_numpy(m))
 
+        # Handle class labels.
+        if mix_class < 0:
+            mix_class = None
+        if class_idx < 0:
+            class_idx = None
+
         # Generate random latents.
         all_seeds = [seed for seed, _weight in w0_seeds] + [stylemix_seed]
         all_seeds = list(set(all_seeds))
         all_zs = np.zeros([len(all_seeds), G.z_dim], dtype=np.float32)
         all_cs = np.zeros([len(all_seeds), G.c_dim], dtype=np.float32)
+        all_cs_mix = np.zeros([len(all_seeds), G.c_dim], dtype=np.float32)
         for idx, seed in enumerate(all_seeds):
             rnd = np.random.RandomState(seed)
             all_zs[idx] = rnd.randn(G.z_dim)
-            if G.c_dim > 0:
+            # Class index for target class.
+            if G.c_dim > 0 and class_idx is not None:
+                all_cs[idx, class_idx] = 1
+                _class_idx = class_idx
+            elif G.c_dim > 0:
                 all_cs[idx, rnd.randint(G.c_dim)] = 1
+                _class_idx = rnd.randint(G.c_dim)
+            else:
+                _class_idx = None
+
+            # Class index for style mixing.
+            if G.c_dim > 0 and mix_class is not None:
+                all_cs_mix[idx, mix_class] = 1
+                _mix_class_idx = mix_class
+            elif G.c_dim > 0:
+                all_cs_mix[idx, rnd.randint(G.c_dim)] = 1
+                _mix_class_idx = rnd.randint(G.c_dim)
+            else:
+                _mix_class_idx = None
 
         # Run mapping network.
         w_avg = G.mapping.w_avg
         all_zs = self.to_device(torch.from_numpy(all_zs))
         all_cs = self.to_device(torch.from_numpy(all_cs))
+        all_cs_mix = self.to_device(torch.from_numpy(all_cs_mix))
         all_ws = G.mapping(z=all_zs, c=all_cs, truncation_psi=trunc_psi, truncation_cutoff=trunc_cutoff) - w_avg
         all_ws = dict(zip(all_seeds, all_ws))
+        all_ws_mix = G.mapping(z=all_zs, c=all_cs_mix, truncation_psi=trunc_psi, truncation_cutoff=trunc_cutoff) - w_avg
+        all_ws_mix = dict(zip(all_seeds, all_ws_mix))
 
         # Calculate final W.
         w = torch.stack([all_ws[seed] * weight for seed, weight in w0_seeds]).sum(dim=0, keepdim=True)
         stylemix_idx = [idx for idx in stylemix_idx if 0 <= idx < G.num_ws]
         if len(stylemix_idx) > 0:
-            w[:, stylemix_idx] = all_ws[stylemix_seed][np.newaxis, stylemix_idx]
+            w[:, stylemix_idx] = all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]
         w += w_avg
+
+        # Print image recipe.
+        if (_mix_class_idx != _class_idx) and len(stylemix_idx):
+            _class_str = f'Class: {_class_idx} -> {_mix_class_idx} ({len(stylemix_idx)} ws)'
+        else:
+            _class_str = f'Class: {_class_idx}'
+        _seed_str = 'Seed: ' + ', '.join(['{} ({:.1f}%)'.format(seed, perc*100) for seed, perc in w0_seeds])
+        print(_class_str, _seed_str)
 
         # Run synthesis network.
         synthesis_kwargs = dnnlib.EasyDict(noise_mode=noise_mode, force_fp32=force_fp32)
@@ -320,7 +362,9 @@ class Renderer:
         if img_normalize:
             img = img / img.norm(float('inf'), dim=[1,2], keepdim=True).clip(1e-8, 1e8)
         img = img * (10 ** (img_scale_db / 20))
-        img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8).permute(1, 2, 0)
+        img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+        gan_out_img = img
+        img = img.permute(1, 2, 0)
         res.image = img
 
         # FFT.
@@ -335,6 +379,44 @@ class Renderer:
             fft = (fft / fft.mean()).log10() * 10 # dB
             fft = self._apply_cmap((fft / fft_range_db + 1) / 2)
             res.image = torch.cat([img.expand_as(fft), fft], dim=1)
+
+        # Show predictions.
+        if self._visualizer._classifier is not None:
+            if sf.backend() == 'tensorflow':
+                import tensorflow as tf
+                dtype = tf.uint8
+            elif sf.backend() == 'torch':
+                dtype = torch.uint8
+            c = self._visualizer._classifier_args
+            target_px = c.target_px
+            crop_kw = dict(
+                gan_um=c.gan_um,
+                gan_px=c.gan_px,
+                target_um=c.target_um,
+            )
+            img = crop(gan_out_img, **crop_kw)  # type: ignore
+            img = sf.io.convert_dtype(img, dtype)
+            normalizer = None #self.normalizer if normalize else None
+            if sf.backend() == 'tensorflow':
+                img = sf.io.tensorflow.preprocess_uint8(
+                    img,
+                    normalizer=normalizer,
+                    standardize=True,
+                    resize_px=target_px)['tile_image']
+                img = tf.expand_dims(img, axis=0)
+            elif sf.backend() == 'torch':
+                img = sf.io.torch.preprocess_uint8(
+                    img,
+                    normalizer=normalizer,
+                    standardize=True,
+                    resize_px=target_px)
+                img = torch.unsqueeze(img, dim=0)
+            preds = self._visualizer._classifier(img)
+            if isinstance(preds, list):
+                preds = [p[0].numpy() for p in preds]
+            else:
+                preds = preds[0].numpy()
+            self._visualizer.stylemix_widget.viz._predictions = preds
 
     @staticmethod
     def run_synthesis_net(net, *args, capture_layer=None, **kwargs): # => out, layers
