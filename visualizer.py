@@ -341,8 +341,8 @@ def main(
             import tensorflow as tf
             model = tf.keras.models.load_model(classifier)
         elif sf.backend() == 'torch':
-            import torch
-            model = torch.load(classifier)
+            model = sf.model.torch.load(classifier)
+            model = model.eval()
     else:
         model = None
         classifier_args = None

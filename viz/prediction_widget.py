@@ -25,7 +25,7 @@ class PredictionWidget:
             for p, _pred_array in enumerate(viz._predictions):
                 imgui.text(f'Pred {p}')
                 imgui.same_line(viz.label_w)
-                imgui.core.plot_histogram('##pred', array('f', _pred_array))
+                imgui.core.plot_histogram('##pred', array('f', _pred_array), scale_min=0, scale_max=1)
                 imgui.same_line(viz.label_w + viz.font_size * 30)
                 ol = config['outcome_labels'][config['outcomes'][p]]
                 pred_str = ol[str(np.argmax(_pred_array))]
@@ -35,7 +35,7 @@ class PredictionWidget:
         elif viz._use_classifier and viz._predictions is not None:
             imgui.text('Prediction')
             imgui.same_line(viz.label_w)
-            imgui.core.plot_histogram('##pred', array('f', viz._predictions))
+            imgui.core.plot_histogram('##pred', array('f', viz._predictions), scale_min=0, scale_max=1)
             imgui.same_line(viz.label_w + viz.font_size * 30)
             ol = config['outcome_labels']
             pred_str = ol[str(np.argmax(viz._predictions))]

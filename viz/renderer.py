@@ -292,8 +292,10 @@ class Renderer:
             if sf.backend() == 'tensorflow':
                 import tensorflow as tf
                 dtype = tf.uint8
+                to_numpy = lambda x: x.numpy()
             elif sf.backend() == 'torch':
                 dtype = torch.uint8
+                to_numpy = lambda x: x.cpu().detach().numpy()
 
             target_px = c.target_px
             crop_kw = dict(
@@ -319,9 +321,9 @@ class Renderer:
                 img = torch.unsqueeze(img, dim=0)
             preds = self._visualizer._classifier(img)
             if isinstance(preds, list):
-                preds = [p[0].numpy() for p in preds]
+                preds = [to_numpy(p[0]) for p in preds]
             else:
-                preds = preds[0].numpy()
+                preds = to_numpy(preds[0])
             self._visualizer._predictions = preds
 
             # UQ --------------------------------------------------------------
