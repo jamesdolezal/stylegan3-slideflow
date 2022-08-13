@@ -21,7 +21,7 @@ class PredictionWidget:
     def __call__(self, show=True):
         viz = self.viz
         config = viz._classifier_args.config
-        if viz._predictions is not None and isinstance(viz._predictions, list):
+        if viz._use_classifier and viz._predictions is not None and isinstance(viz._predictions, list):
             for p, _pred_array in enumerate(viz._predictions):
                 imgui.text(f'Pred {p}')
                 imgui.same_line(viz.label_w)
@@ -29,17 +29,17 @@ class PredictionWidget:
                 imgui.same_line(viz.label_w + viz.font_size * 30)
                 ol = config['outcome_labels'][config['outcomes'][p]]
                 pred_str = ol[str(np.argmax(_pred_array))]
-                if viz._uncertainty is not None:
+                if viz._use_uncertainty and viz._uncertainty is not None:
                     pred_str += " (UQ: {:.4f})".format(viz._uncertainty[p])
                 imgui.text(pred_str)
-        elif viz._predictions is not None:
+        elif viz._use_classifier and viz._predictions is not None:
             imgui.text('Prediction')
             imgui.same_line(viz.label_w)
             imgui.core.plot_histogram('##pred', array('f', viz._predictions))
             imgui.same_line(viz.label_w + viz.font_size * 30)
             ol = config['outcome_labels']
             pred_str = ol[str(np.argmax(viz._predictions))]
-            if viz._uncertainty is not None:
+            if viz._use_uncertainty and viz._uncertainty is not None:
                 pred_str += " (UQ: {:.4f})".format(viz._uncertainty)
             imgui.text(pred_str)
         if viz._gan_config is not None and 'slideflow_kwargs' in viz._gan_config:

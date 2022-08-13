@@ -15,6 +15,7 @@ import torch.fft
 import torch.nn
 import matplotlib.cm
 import dnnlib
+import threading
 from torch_utils.ops import upfirdn2d
 import legacy # pylint: disable=import-error
 
@@ -53,6 +54,28 @@ def _sinc(x):
 def _lanczos_window(x, a):
     x = x.abs() / a
     return torch.where(x < 1, _sinc(x), torch.zeros_like(x))
+
+def _reduce_dropout_preds(yp_drop, num_outcomes):
+    if sf.backend() == 'tensorflow':
+        import tensorflow as tf
+        if num_outcomes > 1:
+            yp_drop = [tf.stack(yp_drop[n], axis=0) for n in range(num_outcomes)]
+            yp_mean = [tf.math.reduce_mean(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
+            yp_std = [tf.math.reduce_std(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
+        else:
+            yp_drop = tf.stack(yp_drop[0], axis=0)
+            yp_mean = tf.math.reduce_mean(yp_drop, axis=0)[0].numpy()
+            yp_std = tf.math.reduce_std(yp_drop, axis=0)[0].numpy()
+    else:
+        if num_outcomes > 1:
+            stacked = [torch.stack(yp_drop[n], dim=0) for n in range(num_outcomes)]
+            yp_mean = [torch.mean(stacked[n], dim=0) for n in range(num_outcomes)]
+            yp_std = [torch.std(stacked[n], dim=0) for n in range(num_outcomes)]
+        else:
+            stacked = torch.stack(yp_drop[0], dim=0)  # type: ignore
+            yp_mean = torch.mean(stacked, dim=0)  # type: ignore
+            yp_std = torch.std(stacked, dim=0)  # type: ignore
+    return yp_mean, yp_std
 
 #----------------------------------------------------------------------------
 
@@ -122,18 +145,19 @@ def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
 
 class Renderer:
     def __init__(self, visualizer):
-        self._visualizer    = visualizer
-        self._device        = torch.device('cuda')
-        self._pkl_data      = dict()    # {pkl: dict | CapturedException, ...}
-        self._networks      = dict()    # {cache_key: torch.nn.Module, ...}
-        self._pinned_bufs   = dict()    # {(shape, dtype): torch.Tensor, ...}
-        self._cmaps         = dict()    # {name: torch.Tensor, ...}
-        self._is_timing     = False
-        self._start_event   = torch.cuda.Event(enable_timing=True)
-        self._end_event     = torch.cuda.Event(enable_timing=True)
-        self._net_layers    = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
-        self._uq_thread     = None
-        self._stop_thread   = False
+        self._visualizer        = visualizer
+        self._device            = torch.device('cuda')
+        self._pkl_data          = dict()    # {pkl: dict | CapturedException, ...}
+        self._networks          = dict()    # {cache_key: torch.nn.Module, ...}
+        self._pinned_bufs       = dict()    # {(shape, dtype): torch.Tensor, ...}
+        self._cmaps             = dict()    # {name: torch.Tensor, ...}
+        self._is_timing         = False
+        self._start_event       = torch.cuda.Event(enable_timing=True)
+        self._end_event         = torch.cuda.Event(enable_timing=True)
+        self._net_layers        = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
+        self._uq_thread         = None
+        self._stop_uq_thread    = False
+        self._stop_pred_thread  = False
 
     def render(self, **args):
         self._is_timing = True
@@ -229,17 +253,14 @@ class Renderer:
         return x
 
     def _calc_uncertainty(self, img):
-        import threading
-        import tensorflow as tf
-
         self._visualizer._uncertainty = None
-        if self._stop_thread and self._uq_thread is not None:
+        if self._stop_uq_thread and self._uq_thread is not None:
             self._uq_thread.join()
 
         def calc_uq(uq_n=30):
             pred_fn = self._visualizer._classifier
             for i in range(uq_n):
-                if self._stop_thread:
+                if self._stop_uq_thread:
                     return
                 yp = pred_fn(img, training=False)
                 if i == 0:
@@ -250,24 +271,67 @@ class Renderer:
                         yp_drop[o] += [yp[o]]
                 else:
                     yp_drop[0] += [yp]
+            yp_mean, yp_std = _reduce_dropout_preds(yp_drop, num_outcomes)
             if num_outcomes > 1:
-                yp_drop = [tf.stack(yp_drop[n], axis=0) for n in range(num_outcomes)]
-                yp_mean = [tf.math.reduce_mean(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
-                yp_std = [tf.math.reduce_std(yp_drop[n], axis=0)[0].numpy() for n in range(num_outcomes)]
                 self._visualizer._uncertainty = [np.mean(s) for s in yp_std]
             else:
-                yp_drop = tf.stack(yp_drop[0], axis=0)
-                yp_mean = tf.math.reduce_mean(yp_drop, axis=0)[0].numpy()
-                yp_std = tf.math.reduce_std(yp_drop, axis=0)[0].numpy()
                 self._visualizer._uncertainty = np.mean(yp_std)
             print("UQ Predictions:", yp_mean)
             print("UQ Uncertainty:", yp_std)
-            self._stop_thread = True
+            self._stop_uq_thread = True
 
-        self._stop_thread = False
+        self._stop_uq_thread = False
         self._uq_thread = threading.Thread(target=calc_uq)
         self._uq_thread.start()
 
+    def _classify_img(self, img):
+        c = self._visualizer._classifier_args
+
+        def run_classification():
+            nonlocal img
+            if sf.backend() == 'tensorflow':
+                import tensorflow as tf
+                dtype = tf.uint8
+            elif sf.backend() == 'torch':
+                dtype = torch.uint8
+
+            target_px = c.target_px
+            crop_kw = dict(
+                gan_um=c.gan_um,
+                gan_px=c.gan_px,
+                target_um=c.target_um,
+            )
+            img = crop(img, **crop_kw)  # type: ignore
+            img = sf.io.convert_dtype(img, dtype)
+            if sf.backend() == 'tensorflow':
+                img = sf.io.tensorflow.preprocess_uint8(
+                    img,
+                    normalizer=c.normalizer,
+                    standardize=True,
+                    resize_px=target_px)['tile_image']
+                img = tf.expand_dims(img, axis=0)
+            elif sf.backend() == 'torch':
+                img = sf.io.torch.preprocess_uint8(
+                    img,
+                    normalizer=c.normalizer,
+                    standardize=True,
+                    resize_px=target_px)
+                img = torch.unsqueeze(img, dim=0)
+            preds = self._visualizer._classifier(img)
+            if isinstance(preds, list):
+                preds = [p[0].numpy() for p in preds]
+            else:
+                preds = preds[0].numpy()
+            self._visualizer._predictions = preds
+
+            # UQ --------------------------------------------------------------
+            if c.config is not None and c.config['hp']['uq'] and self._visualizer._use_uncertainty:
+                self._calc_uncertainty(img)
+            # -----------------------------------------------------------------
+
+        #classifier_thread = threading.Thread(target=run_classification, daemon=False)
+        #classifier_thread.start()
+        run_classification()
 
     def _render_impl(self, res,
         pkl             = None,
@@ -294,7 +358,7 @@ class Renderer:
         untransform     = False,
     ):
         # Stop UQ thread if running.
-        self._stop_thread = True
+        self._stop_uq_thread = True
 
         # Dig up network details.
         G = self.get_network(pkl, 'G_ema')
@@ -314,9 +378,9 @@ class Renderer:
             G.synthesis.input.transform.copy_(torch.from_numpy(m))
 
         # Handle class labels.
-        if mix_class < 0:
+        if mix_class is not None and mix_class < 0:
             mix_class = None
-        if class_idx < 0:
+        if class_idx is not None and class_idx < 0:
             class_idx = None
 
         # Generate random latents.
@@ -427,48 +491,8 @@ class Renderer:
             res.image = torch.cat([img.expand_as(fft), fft], dim=1)
 
         # Show predictions.
-        if self._visualizer._classifier is not None:
-            if sf.backend() == 'tensorflow':
-                import tensorflow as tf
-                dtype = tf.uint8
-            elif sf.backend() == 'torch':
-                dtype = torch.uint8
-            c = self._visualizer._classifier_args
-            target_px = c.target_px
-            crop_kw = dict(
-                gan_um=c.gan_um,
-                gan_px=c.gan_px,
-                target_um=c.target_um,
-            )
-            img = crop(gan_out_img, **crop_kw)  # type: ignore
-            img = sf.io.convert_dtype(img, dtype)
-            normalizer = None #self.normalizer if normalize else None
-            if sf.backend() == 'tensorflow':
-                img = sf.io.tensorflow.preprocess_uint8(
-                    img,
-                    normalizer=normalizer,
-                    standardize=True,
-                    resize_px=target_px)['tile_image']
-                img = tf.expand_dims(img, axis=0)
-            elif sf.backend() == 'torch':
-                img = sf.io.torch.preprocess_uint8(
-                    img,
-                    normalizer=normalizer,
-                    standardize=True,
-                    resize_px=target_px)
-                img = torch.unsqueeze(img, dim=0)
-            preds = self._visualizer._classifier(img)
-
-            # UQ --------------------------------------------------------------
-            if c.config is not None and c.config['hp']['uq']:
-                self._calc_uncertainty(img)
-            # -----------------------------------------------------------------
-
-            if isinstance(preds, list):
-                preds = [p[0].numpy() for p in preds]
-            else:
-                preds = preds[0].numpy()
-            self._visualizer._predictions = preds
+        if self._visualizer._use_classifier:
+            self._classify_img(gan_out_img)
 
     @staticmethod
     def run_synthesis_net(net, *args, capture_layer=None, **kwargs): # => out, layers

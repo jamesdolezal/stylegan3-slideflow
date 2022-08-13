@@ -13,18 +13,20 @@ from gui_utils import imgui_utils
 
 class LayerWidget:
     def __init__(self, viz):
-        self.viz            = viz
-        self.prev_layers    = None
-        self.cur_layer      = None
-        self.sel_channels   = 3
-        self.base_channel   = 0
-        self.img_scale_db   = 0
-        self.img_normalize  = False
-        self.fft_show       = False
-        self.fft_all        = True
-        self.fft_range_db   = 50
-        self.fft_beta       = 8
-        self.refocus        = False
+        self.viz                = viz
+        self.prev_layers        = None
+        self.cur_layer          = None
+        self.sel_channels       = 3
+        self.base_channel       = 0
+        self.img_scale_db       = 0
+        self.img_normalize      = False
+        self.fft_show           = False
+        self.fft_all            = True
+        self.fft_range_db       = 50
+        self.fft_beta           = 8
+        self.refocus            = False
+        self.use_classifier     = True
+        self.use_uncertainty    = viz._use_uncertainty
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
@@ -47,7 +49,7 @@ class LayerWidget:
 
             # Begin list.
             width = viz.font_size * 28
-            height = imgui.get_text_line_height_with_spacing() * 12 + viz.spacing
+            height = imgui.get_text_line_height_with_spacing() * 13 + viz.spacing
             imgui.push_style_var(imgui.STYLE_FRAME_PADDING, [0, 0])
             imgui.push_style_color(imgui.COLOR_CHILD_BACKGROUND, *bg_color)
             imgui.push_style_color(imgui.COLOR_HEADER, 0, 0, 0, 0)
@@ -169,6 +171,16 @@ class LayerWidget:
                 imgui.same_line()
                 if imgui_utils.button('Reset##fft_beta', width=-1, enabled=(self.fft_beta != 8)):
                     self.fft_beta = 8
+
+            with imgui_utils.grayed_out(viz._classifier is None):
+                _clicked, self.use_classifier = imgui.checkbox('Use classifier', self.use_classifier)
+                viz._use_classifier = self.use_classifier
+
+            c = viz._classifier_args
+            with imgui_utils.grayed_out(c.config is None or not c.config['hp']['uq']):
+                imgui.same_line(viz.font_size * 8)
+                _clicked, self.use_uncertainty = imgui.checkbox('Enable UQ', self.use_uncertainty)
+                viz._use_uncertainty = self.use_uncertainty
 
             # End options.
             imgui.end_child()

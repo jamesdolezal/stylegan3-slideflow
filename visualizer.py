@@ -33,6 +33,13 @@ except ImportError:
     # Error occurs when running script in StyleGAN3 directory
     import dnnlib
 
+import slideflow as sf
+if sf.backend() == 'tensorflow':
+    import tensorflow as tf
+    physical_devices = tf.config.list_physical_devices('GPU')
+    for device in physical_devices:
+        tf.config.experimental.set_memory_growth(device, True)
+
 #----------------------------------------------------------------------------
 
 class Visualizer(imgui_window.ImguiWindow):
@@ -48,6 +55,8 @@ class Visualizer(imgui_window.ImguiWindow):
         self._predictions       = None
         self._classifier        = classifier
         self._classifier_args   = classifier_args
+        self._use_classifier    = classifier is not None
+        self._use_uncertainty   = classifier_args is not None and classifier_args.config['hp']['uq']
         self._gan_config        = None
         self._uncertainty       = None
 
@@ -312,24 +321,24 @@ def main(
                                        "gan_px, gan_um, target_px, target_um.")
 
         import slideflow as sf
-        print("Classifier args:")
-        print("GAN px:    ", gan_px)
-        print("GAN um:    ", gan_um)
-        print("Target px: ", target_px)
-        print("Target um: ", target_um)
         print("Loading classifier at {}...".format(classifier))
         classifier_args = dnnlib.EasyDict(
             gan_px=gan_px,
             gan_um=gan_um,
             target_px=target_px,
             target_um=target_um,
-            config=sf.util.get_model_config(classifier)
-        )
+            config=sf.util.get_model_config(classifier),
+            normalizer=sf.util.get_model_normalizer(classifier))
+
+        print("Classifier args:")
+        print("GAN px:    ", gan_px)
+        print("GAN um:    ", gan_um)
+        print("Target px: ", target_px)
+        print("Target um: ", target_um)
+        print("Normalizer:", classifier_args.normalizer)
+
         if sf.backend() == 'tensorflow':
             import tensorflow as tf
-            physical_devices = tf.config.list_physical_devices('GPU')
-            for device in physical_devices:
-                tf.config.experimental.set_memory_growth(device, True)
             model = tf.keras.models.load_model(classifier)
         elif sf.backend() == 'torch':
             import torch

@@ -78,7 +78,7 @@ class PickleWidget:
         viz = self.viz
         recent_pkls = [pkl for pkl in self.recent_pkls if pkl != self.user_pkl]
         if show:
-            imgui.text('Pickle')
+            imgui.text('GAN Pickle')
             imgui.same_line(viz.label_w)
             changed, self.user_pkl = imgui_utils.input_text('##pkl', self.user_pkl, 1024,
                 flags=(imgui.INPUT_TEXT_AUTO_SELECT_ALL | imgui.INPUT_TEXT_ENTER_RETURNS_TRUE),
