@@ -67,6 +67,11 @@ class PickleWidget:
                 viz.result = dnnlib.EasyDict(error=renderer.CapturedException())
             if not ignore_errors:
                 raise
+        try:
+            import slideflow as sf
+            self.viz._gan_config = sf.util.get_gan_config(pkl)
+        except Exception:
+            self.viz._gan_config = None
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
