@@ -20,7 +20,10 @@ class PredictionWidget:
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
-        config = viz._classifier_args.config
+        if viz._classifier_args:
+            config = viz._classifier_args.config
+        else:
+            config = None
         if viz._use_classifier and viz._predictions is not None and isinstance(viz._predictions, list):
             for p, _pred_array in enumerate(viz._predictions):
                 imgui.text(f'Pred {p}')

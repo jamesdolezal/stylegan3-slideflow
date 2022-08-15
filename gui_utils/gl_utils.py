@@ -332,7 +332,7 @@ def draw_shape(vertices, *, mode=gl.GL_TRIANGLE_FAN, pos=0, size=1, color=1, alp
 
 #----------------------------------------------------------------------------
 
-def draw_rect(*, pos=0, pos2=None, size=None, align=0, rint=False, color=1, alpha=1, rounding=0):
+def draw_rect(*, pos=0, pos2=None, size=None, align=0, rint=False, color=1, alpha=1, rounding=0, mode=gl.GL_TRIANGLE_FAN):
     assert pos2 is None or size is None
     pos = np.broadcast_to(np.asarray(pos, dtype='float32'), [2])
     pos2 = np.broadcast_to(np.asarray(pos2, dtype='float32'), [2]) if pos2 is not None else None
@@ -346,7 +346,7 @@ def draw_rect(*, pos=0, pos2=None, size=None, align=0, rint=False, color=1, alph
     if np.min(rounding) == 0:
         rounding *= 0
     vertices = _setup_rect(float(rounding[0]), float(rounding[1]))
-    draw_shape(vertices, mode=gl.GL_TRIANGLE_FAN, pos=pos, size=size, color=color, alpha=alpha)
+    draw_shape(vertices, pos=pos, size=size, color=color, alpha=alpha, mode=mode)
 
 @functools.lru_cache(maxsize=10000)
 def _setup_rect(rx, ry):
