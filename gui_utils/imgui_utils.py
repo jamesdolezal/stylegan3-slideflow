@@ -178,19 +178,22 @@ def click_previous_control(enabled=True):
 
 #----------------------------------------------------------------------------
 
-def click_hidden_window(label, x, y, width, height, enabled=True):
+def click_hidden_window(label, x, y, width, height, enabled=True, ignore_shift=False):
     imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0, 0, 0, 0)
     imgui.push_style_color(imgui.COLOR_BORDER, 0, 0, 0, 0)
     imgui.set_next_window_position(x, y)
     imgui.set_next_window_size(width, height)
     imgui.begin(label, closable=False, flags=(imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE))
     clicking, cx, cy = click_previous_control(enabled=enabled)
-    if cx-x < 0 or cy-y < 0:
+    io = imgui.get_io()
+    if cx-x < 0 or cy-y < 0 or (ignore_shift and io.key_shift):
         clicking = False
+        wheel = False
+    else:
+        wheel = io.mouse_wheel
     imgui.end()
     imgui.pop_style_color(2)
-    io = imgui.get_io()
-    return clicking, cx-x, cy-y, io.mouse_wheel
+    return clicking, cx-x, cy-y, wheel
 
 #----------------------------------------------------------------------------
 

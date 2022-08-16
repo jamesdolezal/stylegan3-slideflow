@@ -10,9 +10,7 @@ from gui_utils import gl_utils
 from gui_utils import text_utils
 from viz import slide_renderer as renderer
 from viz import slide_widget
-from viz import slide_latent_widget
-from viz import stylemix_widget
-from viz import trunc_noise_widget
+from viz import saliency_widget
 from viz import performance_widget
 from viz import capture_widget
 from viz import layer_widget
@@ -28,6 +26,8 @@ except ImportError:
     import dnnlib
 
 import slideflow as sf
+import slideflow.grad
+
 if sf.backend() == 'tensorflow':
     import tensorflow as tf
     physical_devices = tf.config.list_physical_devices('GPU')
@@ -38,7 +38,7 @@ if sf.backend() == 'tensorflow':
 
 class Visualizer(imgui_window.ImguiWindow):
     def __init__(self, classifier, classifier_args=None, capture_dir=None, ):
-        super().__init__(title='GAN Visualizer', window_width=3840, window_height=2160)
+        super().__init__(title='Slide Visualizer', window_width=3840, window_height=2160)
 
         # Internals.
         self._last_error_print  = None
@@ -79,14 +79,15 @@ class Visualizer(imgui_window.ImguiWindow):
 
         # Widgets.
         self.slide_widget       = slide_widget.SlideWidget(self)
-        self.slide_latent_widget= slide_latent_widget.SlideLatentWidget(self)
-        self.stylemix_widget    = stylemix_widget.StyleMixingWidget(self)
-        self.trunc_noise_widget = trunc_noise_widget.TruncationNoiseWidget(self)
         self.prediction_widget  = prediction_widget.PredictionWidget(self)
+        self.saliency_widget    = saliency_widget.SaliencyWidget(self)
         self.perf_widget        = performance_widget.PerformanceWidget(self)
         self.capture_widget     = capture_widget.CaptureWidget(self)
         self.layer_widget       = layer_widget.LayerWidget(self)
         self.thumb_widget       = thumb_widget.ThumbWidget(self)
+
+        # Prepare saliency.
+        self.smap = sf.grad.SaliencyMap(classifier, class_idx=1)
 
         if capture_dir is not None:
             self.capture_widget.path = capture_dir
@@ -172,6 +173,8 @@ class Visualizer(imgui_window.ImguiWindow):
         self.pane_w = self.font_size * 45
         self.button_w = self.font_size * 5
         self.label_w = round(self.font_size * 4.5)
+        max_w = self.content_width - self.pane_w
+        max_h = self.content_height
 
         # Begin control pane.
         imgui.set_next_window_position(0, 0)
@@ -181,10 +184,9 @@ class Visualizer(imgui_window.ImguiWindow):
         # Widgets.
         expanded, _visible = imgui_utils.collapsing_header('Whole-slide image', default=True)
         self.slide_widget(expanded)
-        self.slide_latent_widget(expanded)
-        self.stylemix_widget(expanded)
-        self.trunc_noise_widget(expanded)
+        expanded, _visible = imgui_utils.collapsing_header('Prediction & saliency', default=True)
         self.prediction_widget(expanded)
+        self.saliency_widget(expanded)
         expanded, _visible = imgui_utils.collapsing_header('Performance & capture', default=True)
         self.perf_widget(expanded)
         self.capture_widget(expanded)
@@ -193,17 +195,15 @@ class Visualizer(imgui_window.ImguiWindow):
         expanded, _visible = imgui_utils.collapsing_header('Example', default=True)
         self.thumb_widget(expanded)
 
-        # Display.
-        max_w = self.content_width - self.pane_w
-        max_h = self.content_height
-
         # Detect mouse dragging in the thumbnail display.
-        clicking, cx, cy, wheel = imgui_utils.click_hidden_window('##result_area', x=self.pane_w, y=0, width=self.content_width-self.pane_w, height=self.content_height)
+        clicking, cx, cy, wheel = imgui_utils.click_hidden_window('##result_area', x=self.pane_w, y=0, width=self.content_width-self.pane_w, height=self.content_height, ignore_shift=True)
         dragging, dx, dy = imgui_utils.shift_drag_hidden_window('##result_area', x=self.pane_w, y=0, width=self.content_width-self.pane_w, height=self.content_height)
 
         if self.thumb is not None:
             wsi_x, wsi_y = self.display_coords_to_wsi_coords(cx, cy)
 
+            # Update thumb focus location & zoom values
+            # If shift-dragging or scrolling.
             if dragging:
                 self.thumb_focus_x -= (dx * self.thumb_zoom)
                 self.thumb_focus_y -= (dy * self.thumb_zoom)
@@ -211,18 +211,17 @@ class Visualizer(imgui_window.ImguiWindow):
                 self.thumb_zoom /= 1.5
             if wheel < 0:
                 self.thumb_zoom *= 1.5
+
+            window_size = (int(max_w * self.thumb_zoom),
+                           int(max_h * self.thumb_zoom))
+
             if wheel:
-                self.thumb_focus_x = wsi_x
-                self.thumb_focus_y = wsi_y
+                self.thumb_focus_x = wsi_x - (cx * window_size[0] / max_w)
+                self.thumb_focus_y = wsi_y - (cy * window_size[1] / max_h)
             if wheel or dragging:
                 try:
-                    window_size = (int(max_w * self.thumb_zoom),
-                                   int(max_h * self.thumb_zoom))
 
-                    top_left = (
-                        self.thumb_focus_x - (cx * window_size[0] / max_w),
-                        self.thumb_focus_y - (cy * window_size[1] / max_h)
-                    )
+                    top_left = (self.thumb_focus_x, self.thumb_focus_y)
 
                     # Enforce boundary limits.
                     top_left = (max(top_left[0], 0), max(top_left[1], 0))
@@ -266,10 +265,12 @@ class Visualizer(imgui_window.ImguiWindow):
             thumb_max_y = self.thumb_offset[1] + self.thumb.shape[0]
 
             # Calculate location for classifier display.
-            if clicking and (self.thumb_offset[0] <= cx <= thumb_max_x) and (self.thumb_offset[1] <= cy <= thumb_max_y):
+            if clicking and not dragging and (self.thumb_offset[0] <= cx <= thumb_max_x) and (self.thumb_offset[1] <= cy <= thumb_max_y):
                 self.x = wsi_x - (self.wsi.full_extract_px/2)
                 self.y = wsi_y - (self.wsi.full_extract_px/2)
-            if clicking or wheel:
+
+            # Update box location.
+            if clicking or dragging or wheel:
                 self.box_x, self.box_y = self.wsi_coords_to_display_coords(self.x, self.y)
                 self.box_x += self.pane_w
             tw = self.wsi.full_extract_px // self.thumb_zoom
@@ -277,9 +278,7 @@ class Visualizer(imgui_window.ImguiWindow):
             # Draw box with OpenGL.
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
             gl.glLineWidth(3)
-            #thumb_orig = np.array([self.pane_w + self.thumb_offset[0], self.thumb_offset[1]])
             box_pos = np.array([self.box_x, self.box_y])
-            #gl_utils.draw_rect(pos=thumb_orig, size=np.array([tw, tw]), color=[0, 0, 1], mode=gl.GL_LINE_LOOP)
             gl_utils.draw_rect(pos=box_pos, size=np.array([tw, tw]), color=[1, 0, 0], mode=gl.GL_LINE_LOOP)
             gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
             gl.glLineWidth(3)
@@ -300,6 +299,7 @@ class Visualizer(imgui_window.ImguiWindow):
 
         # Display input image.
         pos = np.array([self.pane_w + max_w - (self.tile_px/2 + 20), max_h / 2])
+        middle_pos = np.array([self.pane_w + max_w/2, max_h/2])
         if 'image' in self.result:
             if self._tex_img is not self.result.image:
                 self._tex_img = self.result.image
@@ -307,14 +307,14 @@ class Visualizer(imgui_window.ImguiWindow):
                     self._tex_obj = gl_utils.Texture(image=self._tex_img, bilinear=False, mipmap=False)
                 else:
                     self._tex_obj.update(self._tex_img)
-            self._tex_obj.draw(pos=pos, zoom=1, align=0.5, rint=True)
+            #self._tex_obj.draw(pos=pos, zoom=1, align=0.5, rint=True)
         if 'error' in self.result:
             self.print_error(self.result.error)
             if 'message' not in self.result:
                 self.result.message = str(self.result.error)
         if 'message' in self.result:
             tex = text_utils.get_texture(self.result.message, size=self.font_size, max_width=max_w, max_height=max_h, outline=2)
-            tex.draw(pos=pos, align=0.5, rint=True, color=1)
+            tex.draw(pos=middle_pos, align=0.5, rint=True, color=1)
 
         # End frame.
         self._adjust_font_size()
