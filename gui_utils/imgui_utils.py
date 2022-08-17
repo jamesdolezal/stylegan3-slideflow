@@ -168,9 +168,9 @@ def drag_hidden_window(label, x, y, width, height, enabled=True):
 
 #----------------------------------------------------------------------------
 
-def click_previous_control(enabled=True):
+def click_previous_control(mouse_idx=0, enabled=True):
     clicking = False
-    if imgui.is_mouse_down():
+    if imgui.is_mouse_down(mouse_idx):
         if enabled:
             clicking = True
     cx, cy = imgui.get_mouse_pos() # or position
@@ -178,36 +178,18 @@ def click_previous_control(enabled=True):
 
 #----------------------------------------------------------------------------
 
-def click_hidden_window(label, x, y, width, height, enabled=True, ignore_shift=False):
+def click_hidden_window(label, x, y, width, height, enabled=True, mouse_idx=0):
     imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0, 0, 0, 0)
     imgui.push_style_color(imgui.COLOR_BORDER, 0, 0, 0, 0)
     imgui.set_next_window_position(x, y)
     imgui.set_next_window_size(width, height)
     imgui.begin(label, closable=False, flags=(imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE))
-    clicking, cx, cy = click_previous_control(enabled=enabled)
-    io = imgui.get_io()
-    if cx-x < 0 or cy-y < 0 or (ignore_shift and io.key_shift):
+    clicking, cx, cy = click_previous_control(mouse_idx=mouse_idx, enabled=enabled)
+    if cx-x < 0 or cy-y < 0:
         clicking = False
         wheel = False
     else:
-        wheel = io.mouse_wheel
+        wheel = imgui.get_io().mouse_wheel
     imgui.end()
     imgui.pop_style_color(2)
     return clicking, cx-x, cy-y, wheel
-
-#----------------------------------------------------------------------------
-
-def shift_drag_hidden_window(label, x, y, width, height, enabled=True):
-    imgui.push_style_color(imgui.COLOR_WINDOW_BACKGROUND, 0, 0, 0, 0)
-    imgui.push_style_color(imgui.COLOR_BORDER, 0, 0, 0, 0)
-    imgui.set_next_window_position(x, y)
-    imgui.set_next_window_size(width, height)
-    imgui.begin(label, closable=False, flags=(imgui.WINDOW_NO_TITLE_BAR | imgui.WINDOW_NO_RESIZE | imgui.WINDOW_NO_MOVE))
-    io = imgui.get_io()
-    if io.key_shift:
-        dragging, dx, dy = drag_previous_control(enabled=enabled)
-    else:
-        dragging, dx, dy = False, 0, 0
-    imgui.end()
-    imgui.pop_style_color(2)
-    return dragging, dx, dy

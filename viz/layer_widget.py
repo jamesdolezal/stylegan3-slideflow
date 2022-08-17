@@ -25,7 +25,7 @@ class LayerWidget:
         self.fft_range_db       = 50
         self.fft_beta           = 8
         self.refocus            = False
-        self.use_classifier     = viz._use_classifier
+        self.use_model          = viz._use_model
         self.use_uncertainty    = viz._use_uncertainty
 
     @imgui_utils.scoped_by_object_id
@@ -171,16 +171,6 @@ class LayerWidget:
                 imgui.same_line()
                 if imgui_utils.button('Reset##fft_beta', width=-1, enabled=(self.fft_beta != 8)):
                     self.fft_beta = 8
-
-            with imgui_utils.grayed_out(viz._classifier is None):
-                _clicked, self.use_classifier = imgui.checkbox('Use classifier', self.use_classifier)
-                viz._use_classifier = self.use_classifier
-
-            c = viz._classifier_args
-            with imgui_utils.grayed_out(viz._classifier is None or c.config is None or not c.config['hp']['uq']):
-                imgui.same_line(viz.font_size * 8)
-                _clicked, self.use_uncertainty = imgui.checkbox('Enable UQ', self.use_uncertainty)
-                viz._use_uncertainty = self.use_uncertainty
 
             # End options.
             imgui.end_child()

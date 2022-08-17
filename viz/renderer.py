@@ -169,7 +169,8 @@ class Renderer:
             res.error = CapturedException()
         self._end_event.record(torch.cuda.current_stream(self._device))
         if 'image' in res:
-            res.image = self.to_cpu(res.image).numpy()
+            if not isinstance(res.image, np.ndarray):
+                res.image = self.to_cpu(res.image).numpy()
         if 'stats' in res:
             res.stats = self.to_cpu(res.stats).numpy()
         if 'error' in res:
@@ -258,7 +259,7 @@ class Renderer:
             self._uq_thread.join()
 
         def calc_uq(uq_n=30):
-            pred_fn = self._visualizer._classifier
+            pred_fn = self._visualizer._model
             for i in range(uq_n):
                 if self._stop_uq_thread:
                     return
@@ -284,57 +285,6 @@ class Renderer:
         self._uq_thread = threading.Thread(target=calc_uq)
         self._uq_thread.start()
 
-    def _classify_img(self, img):
-        c = self._visualizer._classifier_args
-
-        def run_classification():
-            nonlocal img
-            if sf.backend() == 'tensorflow':
-                import tensorflow as tf
-                dtype = tf.uint8
-                to_numpy = lambda x: x.numpy()
-            elif sf.backend() == 'torch':
-                dtype = torch.uint8
-                to_numpy = lambda x: x.cpu().detach().numpy()
-
-            target_px = c.target_px
-            crop_kw = dict(
-                gan_um=c.gan_um,
-                gan_px=c.gan_px,
-                target_um=c.target_um,
-            )
-            img = crop(img, **crop_kw)  # type: ignore
-            img = sf.io.convert_dtype(img, dtype)
-            if sf.backend() == 'tensorflow':
-                img = sf.io.tensorflow.preprocess_uint8(
-                    img,
-                    normalizer=c.normalizer,
-                    standardize=True,
-                    resize_px=target_px)['tile_image']
-                img = tf.expand_dims(img, axis=0)
-            elif sf.backend() == 'torch':
-                img = sf.io.torch.preprocess_uint8(
-                    img,
-                    normalizer=c.normalizer,
-                    standardize=True,
-                    resize_px=target_px)
-                img = torch.unsqueeze(img, dim=0)
-            preds = self._visualizer._classifier(img)
-            if isinstance(preds, list):
-                preds = [to_numpy(p[0]) for p in preds]
-            else:
-                preds = to_numpy(preds[0])
-            self._visualizer._predictions = preds
-
-            # UQ --------------------------------------------------------------
-            if c.config is not None and c.config['hp']['uq'] and self._visualizer._use_uncertainty:
-                self._calc_uncertainty(img)
-            # -----------------------------------------------------------------
-
-        #classifier_thread = threading.Thread(target=run_classification, daemon=False)
-        #classifier_thread.start()
-        run_classification()
-
     def _render_impl(self, res,
         pkl             = None,
         w0_seeds        = [[0, 1]],
@@ -358,6 +308,10 @@ class Renderer:
         fft_beta        = 8,
         input_transform = None,
         untransform     = False,
+        show_saliency       = False,
+        saliency_overlay    = False,
+        saliency_method     = 0,
+        img_format          = None,
     ):
         # Stop UQ thread if running.
         self._stop_uq_thread = True
@@ -493,8 +447,68 @@ class Renderer:
             res.image = torch.cat([img.expand_as(fft), fft], dim=1)
 
         # Show predictions.
-        if self._visualizer._use_classifier:
-            self._classify_img(gan_out_img)
+        if self._visualizer._use_model:
+            img = gan_out_img
+            if sf.backend() == 'tensorflow':
+                import tensorflow as tf
+                dtype = tf.uint8
+                to_numpy = lambda x: x.numpy()
+            elif sf.backend() == 'torch':
+                dtype = torch.uint8
+                to_numpy = lambda x: x.cpu().detach().numpy()
+
+            target_px = self._visualizer.tile_px
+            crop_kw = dict(
+                gan_um=self._visualizer.gan_um,
+                gan_px=self._visualizer.gan_px,
+                target_um=self._visualizer.tile_um,
+            )
+            img = crop(img, **crop_kw)  # type: ignore
+            img = sf.io.convert_dtype(img, dtype)
+
+            # Resize.
+            if sf.backend() == 'tensorflow':
+                img = sf.io.tensorflow.preprocess_uint8(img, standardize=False, resize_px=target_px)['tile_image']
+            else:
+                img = sf.io.tensorflow.preprocess_uint8(img, standardize=False, resize_px=target_px)
+
+            # Normalize.
+            normalizer = self._visualizer._normalizer
+            if normalizer:
+                img = normalizer.transform(img)
+                if not isinstance(img, np.ndarray):
+                    res.normalized = img.numpy().astype(np.uint8)
+                else:
+                    res.normalized = img.astype(np.uint8)
+
+            # Finish pre-processing.
+            if sf.backend() == 'tensorflow':
+                img = sf.io.tensorflow.preprocess_uint8(img, standardize=True)['tile_image']
+                img = tf.expand_dims(img, axis=0)
+            elif sf.backend() == 'torch':
+                img = sf.io.torch.preprocess_uint8(img, standardize=True)
+                img = torch.unsqueeze(img, dim=0)
+            preds = self._visualizer._model(img)
+            if isinstance(preds, list):
+                preds = [to_numpy(p[0]) for p in preds]
+            else:
+                preds = to_numpy(preds[0])
+            self._visualizer._predictions = preds
+
+            # UQ --------------------------------------------------------------
+            if self._visualizer.has_uq() and self._visualizer._use_uncertainty:
+                self._calc_uncertainty(img)
+            # -----------------------------------------------------------------
+
+            # Saliency.
+            if show_saliency:
+                mask = self._visualizer.saliency.get(img[0], method=saliency_method)
+                if saliency_overlay:
+                    res.image = sf.grad.plot_utils.overlay(res.image, mask)
+                else:
+                    res.image = sf.grad.plot_utils.inferno(mask)
+                if res.image.shape[-1] == 4:
+                    res.image = res.image[:, :, 0:3]
 
     @staticmethod
     def run_synthesis_net(net, *args, capture_layer=None, **kwargs): # => out, layers

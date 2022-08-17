@@ -25,7 +25,8 @@ from viz import performance_widget
 from viz import capture_widget
 from viz import layer_widget
 from viz import equivariance_widget
-from viz import prediction_widget
+
+from slideflow.workbench import model_widget
 
 try:
     from . import dnnlib
@@ -43,7 +44,7 @@ if sf.backend() == 'tensorflow':
 #----------------------------------------------------------------------------
 
 class Visualizer(imgui_window.ImguiWindow):
-    def __init__(self, capture_dir=None, classifier=None, classifier_args=None):
+    def __init__(self, capture_dir=None, gan_px=None, gan_um=None):
         super().__init__(title='GAN Visualizer', window_width=3840, window_height=2160)
 
         # Internals.
@@ -52,11 +53,14 @@ class Visualizer(imgui_window.ImguiWindow):
         self._defer_rendering   = 0
         self._tex_img           = None
         self._tex_obj           = None
+        self._norm_tex_img      = None
+        self._norm_tex_obj      = None
         self._predictions       = None
-        self._classifier        = classifier
-        self._classifier_args   = classifier_args
-        self._use_classifier    = classifier is not None
-        self._use_uncertainty   = classifier_args is not None and classifier_args.config['hp']['uq']
+        self._model             = None
+        self._model_config      = None
+        self._normalizer        = None
+        self._use_model         = None
+        self._use_uncertainty   = None
         self._gan_config        = None
         self._uncertainty       = None
 
@@ -66,13 +70,17 @@ class Visualizer(imgui_window.ImguiWindow):
         self.pane_w             = 0
         self.label_w            = 0
         self.button_w           = 0
+        self.tile_px            = None
+        self.tile_um            = None
+        self.gan_px             = gan_px
+        self.gan_um             = gan_um
 
         # Widgets.
         self.pickle_widget      = pickle_widget.PickleWidget(self)
         self.latent_widget      = latent_widget.LatentWidget(self)
         self.stylemix_widget    = stylemix_widget.StyleMixingWidget(self)
         self.trunc_noise_widget = trunc_noise_widget.TruncationNoiseWidget(self)
-        self.prediction_widget  = prediction_widget.PredictionWidget(self)
+        self.model_widget       = model_widget.ModelWidget(self, show_saliency=False)
         self.perf_widget        = performance_widget.PerformanceWidget(self)
         self.capture_widget     = capture_widget.CaptureWidget(self)
         self.layer_widget       = layer_widget.LayerWidget(self)
@@ -85,6 +93,17 @@ class Visualizer(imgui_window.ImguiWindow):
         self.set_position(0, 0)
         self._adjust_font_size()
         self.skip_frame() # Layout may change after first frame.
+
+    def has_uq(self):
+        return (self._model is not None
+                and self._model_config is not None
+                and 'uq' in self._model_config['hp']
+                and self._model_config['hp']['uq'])
+
+    def load_model(self, model, ignore_errors=False):
+        self.model_widget.load(model)
+        self.tile_px = self._model_config['tile_px']
+        self.tile_um = self._model_config['tile_um']
 
     def close(self):
         super().close()
@@ -152,7 +171,7 @@ class Visualizer(imgui_window.ImguiWindow):
         self.latent_widget(expanded)
         self.stylemix_widget(expanded)
         self.trunc_noise_widget(expanded)
-        self.prediction_widget(expanded)
+        self.model_widget(expanded)
         expanded, _visible = imgui_utils.collapsing_header('Performance & capture', default=True)
         self.perf_widget(expanded)
         self.capture_widget(expanded)
@@ -187,6 +206,13 @@ class Visualizer(imgui_window.ImguiWindow):
             zoom = min(max_w / self._tex_obj.width, max_h / self._tex_obj.height)
             zoom = np.floor(zoom) if zoom >= 1 else zoom
             self._tex_obj.draw(pos=pos, zoom=zoom, align=0.5, rint=True)
+        if 'normalized' in self.result:
+            if self._norm_tex_img is not self.result.normalized:
+                self._norm_tex_img = self.result.normalized
+                if self._norm_tex_obj is None or not self._norm_tex_obj.is_compatible(image=self._norm_tex_img):
+                    self._norm_tex_obj = gl_utils.Texture(image=self._norm_tex_img, bilinear=False, mipmap=False)
+                else:
+                    self._norm_tex_obj.update(self._norm_tex_img)
         if 'error' in self.result:
             self.print_error(self.result.error)
             if 'message' not in self.result:
@@ -317,37 +343,17 @@ def main(
 
     if classifier is not None:
         if None in (gan_um, gan_px, target_um, target_px):
-            raise click.ClickException("If supplying classifier, must also supply "
+            raise click.ClickException("If supplying classifier model, must also supply "
                                        "gan_px, gan_um, target_px, target_um.")
 
-        import slideflow as sf
-        print("Loading classifier at {}...".format(classifier))
-        classifier_args = dnnlib.EasyDict(
-            gan_px=gan_px,
-            gan_um=gan_um,
-            target_px=target_px,
-            target_um=target_um,
-            config=sf.util.get_model_config(classifier),
-            normalizer=sf.util.get_model_normalizer(classifier))
+        print("GAN image configuration:")
+        print("Size (px):    ", gan_px)
+        print("Size (um):    ", gan_um)
 
-        print("Classifier args:")
-        print("GAN px:    ", gan_px)
-        print("GAN um:    ", gan_um)
-        print("Target px: ", target_px)
-        print("Target um: ", target_um)
-        print("Normalizer:", classifier_args.normalizer)
-
-        if sf.backend() == 'tensorflow':
-            import tensorflow as tf
-            model = tf.keras.models.load_model(classifier)
-        elif sf.backend() == 'torch':
-            model = sf.model.torch.load(classifier)
-            model = model.eval()
+        viz = Visualizer(capture_dir=capture_dir, gan_px=gan_px, gan_um=gan_um)
+        viz.load_model(classifier)
     else:
-        model = None
-        classifier_args = None
-
-    viz = Visualizer(capture_dir=capture_dir, classifier=model, classifier_args=classifier_args)
+        viz = Visualizer(capture_dir=capture_dir)
 
     if browse_dir is not None:
         viz.pickle_widget.search_dirs = [browse_dir]
