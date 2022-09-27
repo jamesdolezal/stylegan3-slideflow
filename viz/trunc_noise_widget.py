@@ -7,7 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import imgui
-from gui_utils import imgui_utils
+from ..gui_utils import imgui_utils
 
 #----------------------------------------------------------------------------
 
@@ -20,6 +20,7 @@ class TruncationNoiseWidget:
         self.noise_enable   = True
         self.noise_seed     = 0
         self.noise_anim     = False
+        self.header         = "StyleGAN"
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):

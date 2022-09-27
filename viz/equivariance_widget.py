@@ -8,8 +8,8 @@
 
 import numpy as np
 import imgui
-import dnnlib
-from gui_utils import imgui_utils
+from .. import dnnlib
+from ..gui_utils import imgui_utils
 
 #----------------------------------------------------------------------------
 
@@ -22,6 +22,7 @@ class EquivarianceWidget:
         self.rotate_def     = dnnlib.EasyDict(self.rotate)
         self.opts           = dnnlib.EasyDict(untransform=False)
         self.opts_def       = dnnlib.EasyDict(self.opts)
+        self.header         = "StyleGAN"
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):

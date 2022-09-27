@@ -14,10 +14,11 @@ import torch
 import torch.fft
 import torch.nn
 import matplotlib.cm
-import dnnlib
 import threading
-from torch_utils.ops import upfirdn2d
-import legacy # pylint: disable=import-error
+
+from ..torch_utils.ops import upfirdn2d
+from .. import legacy # pylint: disable=import-error
+from .. import dnnlib
 
 from rich import print
 import slideflow as sf
@@ -144,7 +145,7 @@ def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
 #----------------------------------------------------------------------------
 
 class Renderer:
-    def __init__(self, visualizer):
+    def __init__(self, visualizer=None, gan_px=0, gan_um=0):
         self._visualizer        = visualizer
         self._device            = torch.device('cuda')
         self._pkl_data          = dict()    # {pkl: dict | CapturedException, ...}
@@ -158,6 +159,8 @@ class Renderer:
         self._uq_thread         = None
         self._stop_uq_thread    = False
         self._stop_pred_thread  = False
+        self.gan_px             = gan_px
+        self.gan_um             = gan_um
 
     def render(self, **args):
         self._is_timing = True
@@ -180,6 +183,19 @@ class Renderer:
             res.render_time = self._start_event.elapsed_time(self._end_event) * 1e-3
             self._is_timing = False
         return res
+
+    def preprocess(self, img, tile_px, tile_um):
+        """Preprocess a generated image for use with a model."""
+        img = sf.io.torch.whc_to_cwh(img)
+        img = crop(
+            img,
+            gan_um=self.gan_um,
+            gan_px=self.gan_px,
+            target_um=tile_um,
+        )
+        img = sf.io.torch.preprocess_uint8(img, standardize=False, resize_px=tile_px)
+        img = sf.io.torch.cwh_to_whc(img)
+        return sf.io.convert_dtype(img, np.uint8)
 
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
@@ -254,6 +270,8 @@ class Renderer:
         return x
 
     def _calc_uncertainty(self, img):
+        if self._visualizer is None:
+            raise ValueError("Visualizer not loaded.")
         self._visualizer._uncertainty = None
         if self._stop_uq_thread and self._uq_thread is not None:
             self._uq_thread.join()
@@ -292,6 +310,7 @@ class Renderer:
         stylemix_seed   = 0,
         class_idx       = None,
         mix_class       = None,
+        mix_frac        = 1,
         trunc_psi       = 1,
         trunc_cutoff    = 0,
         random_seed     = 0,
@@ -308,11 +327,15 @@ class Renderer:
         fft_beta        = 8,
         input_transform = None,
         untransform     = False,
-        show_saliency       = False,
-        saliency_overlay    = False,
-        saliency_method     = 0,
-        img_format          = None,
+        show_saliency   = False,
+        saliency_overlay= False,
+        saliency_method = 0,
+        use_model       = True,
+        **kwargs
     ):
+        if pkl is None:
+            return
+
         # Stop UQ thread if running.
         self._stop_uq_thread = True
 
@@ -338,6 +361,9 @@ class Renderer:
             mix_class = None
         if class_idx is not None and class_idx < 0:
             class_idx = None
+
+        if stylemix_idx == [] and mix_class is not None:
+            stylemix_seed = w0_seeds[0][0]
 
         # Generate random latents.
         all_seeds = [seed for seed, _weight in w0_seeds] + [stylemix_seed]
@@ -380,9 +406,17 @@ class Renderer:
 
         # Calculate final W.
         w = torch.stack([all_ws[seed] * weight for seed, weight in w0_seeds]).sum(dim=0, keepdim=True)
-        stylemix_idx = [idx for idx in stylemix_idx if 0 <= idx < G.num_ws]
+        if stylemix_idx == [] and mix_class is not None:
+            stylemix_idx = list(range(w.shape[1]))
+        else:
+            stylemix_idx = [idx for idx in stylemix_idx if 0 <= idx < G.num_ws]
         if len(stylemix_idx) > 0:
-            w[:, stylemix_idx] = all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]
+            if mix_frac == 1:
+                w[:, stylemix_idx] = all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]
+            else:
+                print("Mix fraction", mix_frac)
+                w[:, stylemix_idx] = (((all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]) * mix_frac)
+                                       + (w[:, stylemix_idx] * (1-mix_frac)))
         w += w_avg
 
         # Print image recipe.
@@ -446,8 +480,11 @@ class Renderer:
             fft = self._apply_cmap((fft / fft_range_db + 1) / 2)
             res.image = torch.cat([img.expand_as(fft), fft], dim=1)
 
+        # Copy Tensor to CPU.
+        res.image = res.image.cpu()
+
         # Show predictions.
-        if self._visualizer._use_model:
+        if use_model and self._visualizer is not None and self._visualizer._use_model:
             img = gan_out_img
             if sf.backend() == 'tensorflow':
                 import tensorflow as tf
@@ -459,8 +496,8 @@ class Renderer:
 
             target_px = self._visualizer.tile_px
             crop_kw = dict(
-                gan_um=self._visualizer.gan_um,
-                gan_px=self._visualizer.gan_px,
+                gan_um=self.gan_um,
+                gan_px=self.gan_px,
                 target_um=self._visualizer.tile_um,
             )
             img = crop(img, **crop_kw)  # type: ignore
@@ -470,7 +507,7 @@ class Renderer:
             if sf.backend() == 'tensorflow':
                 img = sf.io.tensorflow.preprocess_uint8(img, standardize=False, resize_px=target_px)['tile_image']
             else:
-                img = sf.io.tensorflow.preprocess_uint8(img, standardize=False, resize_px=target_px)
+                img = sf.io.torch.preprocess_uint8(img, standardize=False, resize_px=target_px)
 
             # Normalize.
             normalizer = self._visualizer._normalizer

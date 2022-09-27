@@ -8,12 +8,15 @@
 
 import numpy as np
 import imgui
-import dnnlib
-from gui_utils import imgui_utils
+from .. import dnnlib
+from ..gui_utils import imgui_utils
 
 #----------------------------------------------------------------------------
 
 class LatentWidget:
+
+    header = "StyleGAN"
+
     def __init__(self, viz):
         self.viz        = viz
         self.latent     = dnnlib.EasyDict(x=0, y=0, anim=False, speed=0.25)

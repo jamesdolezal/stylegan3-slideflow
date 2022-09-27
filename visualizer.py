@@ -7,7 +7,6 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import click
-import os
 
 import multiprocessing
 import numpy as np
@@ -72,8 +71,8 @@ class Visualizer(imgui_window.ImguiWindow):
         self.button_w           = 0
         self.tile_px            = None
         self.tile_um            = None
-        self.gan_px             = gan_px
-        self.gan_um             = gan_um
+        self._gan_px            = gan_px
+        self._gan_um            = gan_um
 
         # Widgets.
         self.pickle_widget      = pickle_widget.PickleWidget(self)
@@ -93,6 +92,28 @@ class Visualizer(imgui_window.ImguiWindow):
         self.set_position(0, 0)
         self._adjust_font_size()
         self.skip_frame() # Layout may change after first frame.
+
+    @property
+    def gan_um(self):
+        return self._gan_um
+
+    @gan_um.setter
+    def gan_um(self, value):
+        self._gan_um = value
+        if (self._async_renderer is not None
+           and self._async_renderer._renderer_obj is not None):
+            self._async_renderer._renderer_obj.gan_um = value
+
+    @property
+    def gan_px(self):
+        return self._gan_px
+
+    @gan_um.setter
+    def gan_px(self, value):
+        self._gan_px = value
+        if (self._async_renderer is not None
+           and self._async_renderer._renderer_obj is not None):
+            self._async_renderer._renderer_obj.gan_px = value
 
     def has_uq(self):
         return (self._model is not None
@@ -281,6 +302,8 @@ class AsyncRenderer:
     def _set_args_sync(self, **args):
         if self._renderer_obj is None:
             self._renderer_obj = renderer.Renderer(self._visualizer)
+            self._renderer_obj.gan_px = self.gan_px
+            self._renderer_obj.gan_um = self.gan_um
         self._cur_result = self._renderer_obj.render(**args)
 
     def get_result(self):

@@ -9,13 +9,11 @@
 import glob
 import os
 import re
-
-import dnnlib
 import imgui
-import numpy as np
-from gui_utils import imgui_utils
 
+from ..gui_utils import imgui_utils
 from . import renderer
+from .. import dnnlib
 
 #----------------------------------------------------------------------------
 
@@ -33,6 +31,7 @@ class PickleWidget:
         self.recent_pkls    = []
         self.browse_cache   = dict() # {tuple(path, ...): [dnnlib.EasyDict(), ...], ...}
         self.browse_refocus = False
+        self.header         = "StyleGAN"
         self.load('', ignore_errors=True)
 
     def add_recent(self, pkl, ignore_errors=False):

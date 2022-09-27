@@ -7,7 +7,7 @@
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
 import imgui
-from gui_utils import imgui_utils
+from ..gui_utils import imgui_utils
 
 #----------------------------------------------------------------------------
 
@@ -19,6 +19,8 @@ class StyleMixingWidget:
         self.mix_class  = -1
         self.animate    = False
         self.enables    = []
+        self.header     = "StyleGAN"
+        self.mix_frac   = 1
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
