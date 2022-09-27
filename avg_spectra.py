@@ -17,10 +17,8 @@ import scipy.ndimage
 import matplotlib.pyplot as plt
 import click
 import tqdm
-import dnnlib
-
-import legacy
-from training import dataset
+from stylegan3 import dnnlib, legacy
+from stylegan3.training import dataset
 
 #----------------------------------------------------------------------------
 # Setup an iterator for streaming images, in uint8 NCHW format, based on the

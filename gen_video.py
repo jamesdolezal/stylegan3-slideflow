@@ -20,7 +20,7 @@ import scipy.interpolate
 import torch
 from tqdm import tqdm
 
-from . import dnnlib, legacy
+from stylegan3 import dnnlib, legacy
 
 #----------------------------------------------------------------------------
 

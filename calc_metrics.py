@@ -15,14 +15,13 @@ import tempfile
 import copy
 import torch
 
-import dnnlib
-import legacy
-from metrics import metric_main
-from metrics import metric_utils
-from torch_utils import training_stats
-from torch_utils import custom_ops
-from torch_utils import misc
-from torch_utils.ops import conv2d_gradfix
+from stylegan3 import dnnlib, legacy
+from stylegan3.metrics import metric_main
+from stylegan3.metrics import metric_utils
+from stylegan3.torch_utils import training_stats
+from stylegan3.torch_utils import custom_ops
+from stylegan3.torch_utils import misc
+from stylegan3.torch_utils.ops import conv2d_gradfix
 
 #----------------------------------------------------------------------------
 
