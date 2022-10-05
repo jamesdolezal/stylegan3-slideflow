@@ -63,11 +63,6 @@ class LatentWidget:
 
             imgui.same_line(viz.label_w + viz.font_size * 13 + viz.button_w + viz.spacing * 3)
             _clicked, self.latent.anim = imgui.checkbox('Anim', self.latent.anim)
-            imgui.same_line(round(viz.font_size * 27.7))
-            with imgui_utils.item_width(-1 - viz.button_w * 2 - viz.spacing * 2), imgui_utils.grayed_out(not self.latent.anim):
-                changed, speed = imgui.slider_float('##speed', self.latent.speed, -5, 5, format='Speed %.3f', power=3)
-                if changed:
-                    self.latent.speed = speed
             imgui.same_line()
             snapped = dnnlib.EasyDict(self.latent, x=round(self.latent.x), y=round(self.latent.y))
             if imgui_utils.button('Snap', width=viz.button_w, enabled=(self.latent != snapped)):

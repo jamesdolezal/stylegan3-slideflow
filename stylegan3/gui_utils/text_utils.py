@@ -9,12 +9,12 @@
 import functools
 from typing import Optional
 
-import dnnlib
 import numpy as np
 import PIL.Image
 import PIL.ImageFont
 import scipy.ndimage
 
+from .. import dnnlib
 from . import gl_utils
 
 #----------------------------------------------------------------------------

@@ -22,7 +22,7 @@ class EquivarianceWidget:
         self.rotate_def     = dnnlib.EasyDict(self.rotate)
         self.opts           = dnnlib.EasyDict(untransform=False)
         self.opts_def       = dnnlib.EasyDict(self.opts)
-        self.header         = "StyleGAN"
+        self.header         = "StyleGAN (advanced)"
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):

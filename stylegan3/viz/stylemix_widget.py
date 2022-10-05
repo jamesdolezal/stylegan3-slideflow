@@ -19,34 +19,63 @@ class StyleMixingWidget:
         self.mix_class  = -1
         self.animate    = False
         self.enables    = []
-        self.header     = "StyleGAN"
-        self.mix_frac   = 1
+        self.header     = "StyleGAN - style mixing"
+        self.mix_class  = -1
+        self.mix_frac   = 0.5
+        self.enable_mix_class   = False
+        self.enable_mix_seed    = False
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
         num_ws = viz.result.get('num_ws', 0)
         num_enables = viz.result.get('num_ws', 18)
-        self.enables += [False] * max(num_enables - len(self.enables), 0)
+        self.enables += [True] * max(num_enables - len(self.enables), 0)
 
         if show:
-            imgui.text('Stylemix')
+            pos2 = imgui.get_content_region_max()[0] - 1 - (viz.button_w * 2 + viz.spacing)
+            pos1 = pos2 - imgui.get_text_line_height() - viz.spacing
+            pos0 = viz.label_w
+
+            # Class mixing
+            imgui.text('Mixing')
             imgui.same_line(viz.label_w)
-            with imgui_utils.item_width(viz.font_size * 3), imgui_utils.grayed_out(num_ws == 0):
-                _changed, self.seed = imgui.input_int('##seed', self.seed, step=0)
 
-            imgui.same_line(viz.label_w + viz.font_size * 3 + viz.spacing)
-            with imgui_utils.item_width(viz.font_size * 2), imgui_utils.grayed_out(num_ws == 0):
-                _something, self.mix_class = imgui.input_int('Class', self.mix_class, step=0)
-                viz.args.mix_class = self.mix_class
-
-            imgui.same_line(viz.label_w + viz.font_size * 8 + viz.spacing)
             with imgui_utils.grayed_out(num_ws == 0):
+                _clicked, self.enable_mix_class = imgui.checkbox('Mix class', self.enable_mix_class)
+
+            imgui.same_line(viz.label_w + viz.font_size * 5 + viz.spacing)
+            with imgui_utils.item_width(viz.font_size * 2), imgui_utils.grayed_out(not self.enable_mix_class):
+                _something, self.mix_class = imgui.input_int('Class', self.mix_class, step=0)
+                viz.args.mix_class = self.mix_class if self.enable_mix_class else -1
+
+
+
+            # Seed mixing
+            imgui.text('')
+            #imgui.same_line(viz.label_w + viz.font_size * 10 + viz.spacing)
+            imgui.same_line(viz.label_w)
+            with imgui_utils.grayed_out(num_ws == 0):
+                _clicked, self.enable_mix_seed = imgui.checkbox('Mix seed', self.enable_mix_seed)
+
+            imgui.same_line(viz.label_w + viz.font_size * 5 + viz.spacing)
+            with imgui_utils.item_width(viz.font_size * 3), imgui_utils.grayed_out(not self.enable_mix_seed):
+                _changed, self.seed = imgui.input_int('Seed', self.seed, step=0)
+
+            imgui.same_line(viz.label_w + viz.font_size * 11 + viz.spacing)
+            with imgui_utils.grayed_out(not self.enable_mix_seed):
                 _clicked, self.animate = imgui.checkbox('Anim', self.animate)
 
-            pos2 = imgui.get_content_region_max()[0] - 1 - viz.button_w
-            pos1 = pos2 - imgui.get_text_line_height() - viz.spacing
-            pos0 = viz.label_w + viz.font_size * 12
+            imgui.same_line(pos2)
+            with imgui_utils.item_width(viz.button_w * 2 + viz.spacing), imgui_utils.grayed_out(num_ws == 0):
+                _changed, self.mix_frac = imgui.slider_float('##mix_fraction',
+                                                    self.mix_frac,
+                                                    min_value=0,
+                                                    max_value=1,
+                                                    format='Mix %.2f')
+                viz.args.mix_frac = self.mix_frac
+
+            imgui.text('Layers')
             imgui.push_style_var(imgui.STYLE_FRAME_PADDING, [0, 0])
             for idx in range(num_enables):
                 imgui.same_line(round(pos0 + (pos1 - pos0) * (idx / (num_enables - 1))))
@@ -61,14 +90,20 @@ class StyleMixingWidget:
             imgui.same_line(pos2)
             imgui.set_cursor_pos_y(imgui.get_cursor_pos_y() - 3)
             with imgui_utils.grayed_out(num_ws == 0):
-                if imgui_utils.button('Reset', width=-1, enabled=(self.seed != self.seed_def or self.animate or any(self.enables[:num_enables]))):
+                if imgui_utils.button('All', width=viz.button_w, enabled=(num_ws != 0)):
+                    self.seed = self.seed_def
+                    self.animate = False
+                    self.enables = [True] * num_enables
+                imgui.same_line(pos2 + viz.spacing + viz.button_w)
+                if imgui_utils.button('None', width=viz.button_w, enabled=(num_ws != 0)):
                     self.seed = self.seed_def
                     self.animate = False
                     self.enables = [False] * num_enables
 
         if any(self.enables[:num_ws]):
             viz.args.stylemix_idx = [idx for idx, enable in enumerate(self.enables) if enable]
-            viz.args.stylemix_seed = self.seed & ((1 << 32) - 1)
+            if self.enable_mix_seed:
+                viz.args.stylemix_seed = self.seed & ((1 << 32) - 1)
         if self.animate:
             self.seed += 1
 

@@ -306,8 +306,8 @@ class Renderer:
     def _render_impl(self, res,
         pkl             = None,
         w0_seeds        = [[0, 1]],
-        stylemix_idx    = [],
-        stylemix_seed   = 0,
+        stylemix_idx    = [],       # Specify layers of target seed to mix
+        stylemix_seed   = None,        # Specify target seed from which to mix layers
         class_idx       = None,
         mix_class       = None,
         mix_frac        = 1,
@@ -362,11 +362,10 @@ class Renderer:
         if class_idx is not None and class_idx < 0:
             class_idx = None
 
-        if stylemix_idx == [] and mix_class is not None:
-            stylemix_seed = w0_seeds[0][0]
-
         # Generate random latents.
-        all_seeds = [seed for seed, _weight in w0_seeds] + [stylemix_seed]
+        all_seeds = [seed for seed, _weight in w0_seeds]
+        if stylemix_seed is not None:
+            all_seeds += [stylemix_seed]
         all_seeds = list(set(all_seeds))
         all_zs = np.zeros([len(all_seeds), G.z_dim], dtype=np.float32)
         all_cs = np.zeros([len(all_seeds), G.c_dim], dtype=np.float32)
@@ -405,27 +404,26 @@ class Renderer:
         all_ws_mix = dict(zip(all_seeds, all_ws_mix))
 
         # Calculate final W.
+        # Size = (1, 16, px),
+        #     where first dimension is the batch size,
+        #     second dimension is the number of layers (selected by stylemix_idx),
+        #     and final dimension is Z size.
         w = torch.stack([all_ws[seed] * weight for seed, weight in w0_seeds]).sum(dim=0, keepdim=True)
-        if stylemix_idx == [] and mix_class is not None:
-            stylemix_idx = list(range(w.shape[1]))
-        else:
-            stylemix_idx = [idx for idx in stylemix_idx if 0 <= idx < G.num_ws]
+        stylemix_idx = [idx for idx in stylemix_idx if 0 <= idx < G.num_ws]
         if len(stylemix_idx) > 0:
+            w_mixed_dest_class = torch.stack([all_ws_mix[seed][stylemix_idx] * weight for seed, weight in w0_seeds]).sum(dim=0, keepdim=True)
             if mix_frac == 1:
-                w[:, stylemix_idx] = all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]
+                if stylemix_seed is not None:
+                    w[:, stylemix_idx] = all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]
+                else:
+                    w[:, stylemix_idx] = w_mixed_dest_class
             else:
-                print("Mix fraction", mix_frac)
-                w[:, stylemix_idx] = (((all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]) * mix_frac)
-                                       + (w[:, stylemix_idx] * (1-mix_frac)))
+                if stylemix_seed is not None:
+                    w[:, stylemix_idx] = (((all_ws_mix[stylemix_seed][np.newaxis, stylemix_idx]) * mix_frac)
+                                           + (w[:, stylemix_idx] * (1-mix_frac)))
+                else:
+                    w[:, stylemix_idx] = (w_mixed_dest_class * mix_frac) + (w[:, stylemix_idx] * (1-mix_frac))
         w += w_avg
-
-        # Print image recipe.
-        if (_mix_class_idx != _class_idx) and len(stylemix_idx):
-            _class_str = f'Class: {_class_idx} -> {_mix_class_idx} ({len(stylemix_idx)} ws)'
-        else:
-            _class_str = f'Class: {_class_idx}'
-        _seed_str = 'Seed: ' + ', '.join(['{} ({:.1f}%)'.format(seed, perc*100) for seed, perc in w0_seeds])
-        print(_class_str, _seed_str)
 
         # Run synthesis network.
         synthesis_kwargs = dnnlib.EasyDict(noise_mode=noise_mode, force_fp32=force_fp32)

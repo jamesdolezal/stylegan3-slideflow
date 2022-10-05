@@ -20,7 +20,7 @@ class TruncationNoiseWidget:
         self.noise_enable   = True
         self.noise_seed     = 0
         self.noise_anim     = False
-        self.header         = "StyleGAN"
+        self.header         = "StyleGAN (advanced)"
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
