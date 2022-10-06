@@ -197,6 +197,10 @@ class Renderer:
         img = sf.io.torch.cwh_to_whc(img)
         return sf.io.convert_dtype(img, np.uint8)
 
+    def reset(self):
+        del self._pkl_data
+        self._pkl_data = dict()
+
     def get_network(self, pkl, key, **tweak_kwargs):
         data = self._pkl_data.get(pkl, None)
         if data is None:

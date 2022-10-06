@@ -15,14 +15,20 @@ from ..gui_utils import imgui_utils
 
 class LatentWidget:
 
-    header = "StyleGAN"
-
     def __init__(self, viz):
         self.viz        = viz
         self.latent     = dnnlib.EasyDict(x=0, y=0, anim=False, speed=0.25)
         self.latent_def = dnnlib.EasyDict(self.latent)
         self.class_idx  = -1
         self.step_y     = 100
+
+    @property
+    def header(self):
+        return "StyleGAN" if self.visible else ""
+
+    @property
+    def visible(self):
+        return (hasattr(self.viz, 'pkl') and self.viz.pkl)
 
     def drag(self, dx, dy):
         viz = self.viz
@@ -32,7 +38,8 @@ class LatentWidget:
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
-        if show:
+        if show and self.visible:
+            self.content_height = imgui.get_text_line_height_with_spacing() + viz.spacing
             imgui.text('Latent')
             imgui.same_line(viz.label_w)
             seed = round(self.latent.x) + round(self.latent.y) * self.step_y
@@ -70,6 +77,8 @@ class LatentWidget:
             imgui.same_line()
             if imgui_utils.button('Reset', width=-1, enabled=(self.latent != self.latent_def)):
                 self.latent = dnnlib.EasyDict(self.latent_def)
+        else:
+            self.content_height = 0
 
         if self.latent.anim:
             self.latent.x += viz.frame_delta * self.latent.speed

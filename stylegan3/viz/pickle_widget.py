@@ -11,6 +11,7 @@ import os
 import re
 import imgui
 
+from tkinter.filedialog import askopenfilename
 from ..gui_utils import imgui_utils
 from . import renderer
 from .. import dnnlib
@@ -31,8 +32,16 @@ class PickleWidget:
         self.recent_pkls    = []
         self.browse_cache   = dict() # {tuple(path, ...): [dnnlib.EasyDict(), ...], ...}
         self.browse_refocus = False
-        self.header         = "StyleGAN"
         self.load('', ignore_errors=True)
+        self.viz.close_gan = self.close_gan
+
+    @property
+    def header(self):
+        return "StyleGAN" if self.visible else ""
+
+    @property
+    def visible(self):
+        return (hasattr(self.viz, 'pkl') and self.viz.pkl)
 
     def add_recent(self, pkl, ignore_errors=False):
         try:
@@ -43,9 +52,25 @@ class PickleWidget:
             if not ignore_errors:
                 raise
 
+    def file_menu_options(self):
+        if imgui.menu_item('Load GAN...')[1]:
+            pkl = askopenfilename()
+            if pkl:
+                self.load(pkl, ignore_errors=True)
+        if imgui.menu_item('Close GAN')[1]:
+            self.close_gan()
+
+    def close_gan(self):
+        self.cur_pkl = None
+        self.viz.pkl = None
+        renderer = self.viz.get_renderer('stylegan')
+        renderer.reset()
+        self.viz.clear_result()
+
     def load(self, pkl, ignore_errors=False):
         viz = self.viz
         viz.clear_result()
+        viz.close_slide(now=False)
         viz.skip_frame() # The input field will change on next frame.
         try:
             resolved = self.resolve_pkl(pkl)
@@ -57,6 +82,9 @@ class PickleWidget:
             if resolved in self.recent_pkls:
                 self.recent_pkls.remove(resolved)
             self.recent_pkls.insert(0, resolved)
+            self.viz.pkl = self.cur_pkl
+            self.viz._show_tile_preview = True
+            self.viz.create_toast(f"Loaded GAN pkl at {pkl}", icon="success")
         except:
             self.cur_pkl = None
             self.user_pkl = pkl
@@ -71,12 +99,14 @@ class PickleWidget:
             self.viz._gan_config = sf.util.get_gan_config(pkl)
         except Exception:
             self.viz._gan_config = None
+        self.viz._tex_obj = None
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
         recent_pkls = [pkl for pkl in self.recent_pkls if pkl != self.user_pkl]
-        if show:
+        if show and self.visible:
+            self.content_height = imgui.get_text_line_height_with_spacing() + viz.spacing
             imgui.text('GAN Pickle')
             imgui.same_line(viz.label_w)
             changed, self.user_pkl = imgui_utils.input_text('##pkl', self.user_pkl, 1024,
@@ -95,6 +125,8 @@ class PickleWidget:
                 imgui.open_popup('browse_pkls_popup')
                 self.browse_cache.clear()
                 self.browse_refocus = True
+        else:
+            self.content_height = 0
 
         if imgui.begin_popup('recent_pkls_popup'):
             for pkl in recent_pkls:
