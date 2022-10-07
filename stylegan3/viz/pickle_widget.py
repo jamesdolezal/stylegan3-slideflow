@@ -10,7 +10,9 @@ import glob
 import os
 import re
 import imgui
+import json
 
+from os.path import dirname, join, exists
 from tkinter.filedialog import askopenfilename
 from ..gui_utils import imgui_utils
 from . import renderer
@@ -84,7 +86,26 @@ class PickleWidget:
             self.recent_pkls.insert(0, resolved)
             self.viz.pkl = self.cur_pkl
             self.viz._show_tile_preview = True
-            self.viz.create_toast(f"Loaded GAN pkl at {pkl}", icon="success")
+
+            # Load the tile_px/tile_um parameters from the training options, if present
+            training_options = join(dirname(self.cur_pkl), 'training_options.json')
+            gan_px = 0
+            gan_um = 0
+            if exists(training_options):
+                with open(training_options, 'r') as f:
+                    opt = json.load(f)
+                if 'slideflow_kwargs' in opt:
+                    gan_px = opt['slideflow_kwargs']['tile_px']
+                    gan_um = opt['slideflow_kwargs']['tile_um']
+
+            if gan_px or gan_um:
+                renderer = self.viz.get_renderer('stylegan')
+                renderer.gan_px = gan_px
+                renderer.gan_um = gan_um
+                if hasattr(self.viz, 'create_toast'):
+                    self.viz.create_toast(f"Loaded GAN pkl at {pkl} (tile_px={gan_px}, tile_um={gan_um})", icon="success")
+            elif hasattr(self.viz, 'create_toast'):
+                self.viz.create_toast(f"Loaded GAN pkl at {pkl}; unable to detect tile_px and tile_um", icon="warn")
         except:
             self.cur_pkl = None
             self.user_pkl = pkl

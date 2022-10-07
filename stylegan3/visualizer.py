@@ -131,6 +131,9 @@ class Visualizer(imgui_window.ImguiWindow):
             self._async_renderer.close()
             self._async_renderer = None
 
+    def get_renderer(self, *args, **kwargs):
+        return self._async_renderer
+
     def add_recent_pickle(self, pkl, ignore_errors=False):
         self.pickle_widget.add_recent(pkl, ignore_errors=ignore_errors)
 
