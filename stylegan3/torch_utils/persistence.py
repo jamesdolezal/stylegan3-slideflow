@@ -23,7 +23,7 @@ import types
 
 try:
     from .. import dnnlib
-except ImportError:
+except (ValueError, ImportError):
     # Error occurs when running script in StyleGAN3 directory
     import dnnlib
 

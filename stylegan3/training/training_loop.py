@@ -186,7 +186,7 @@ def training_loop(
         with dnnlib.util.open_url(resume_pkl) as f:
             resume_data = legacy.load_network_pkl(f)
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
-            misc.copy_params_and_buffers(resume_data[name], module, require_all=False, lazy_resume=lazy_resume)
+            misc.copy_params_and_buffers(resume_data[name], module, require_all=False, lazy=lazy_resume)
 
     # Print network summary tables.
     if rank == 0:
