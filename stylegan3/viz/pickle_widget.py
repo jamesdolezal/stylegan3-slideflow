@@ -72,7 +72,8 @@ class PickleWidget:
     def load(self, pkl, ignore_errors=False):
         viz = self.viz
         viz.clear_result()
-        viz.close_slide(now=False)
+        if hasattr(viz, 'close_slide'):
+            viz.close_slide(now=False)
         viz.skip_frame() # The input field will change on next frame.
         try:
             resolved = self.resolve_pkl(pkl)

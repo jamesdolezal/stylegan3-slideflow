@@ -14,11 +14,14 @@ https://github.com/NVlabs/stylegan2-ada/blob/main/training/augment.py"""
 import numpy as np
 import scipy.signal
 import torch
-from ..torch_utils import persistence
-from ..torch_utils import misc
-from ..torch_utils.ops import upfirdn2d
-from ..torch_utils.ops import grid_sample_gradfix
-from ..torch_utils.ops import conv2d_gradfix
+
+try:
+    from ..torch_utils import persistence, misc
+    from ..torch_utils.ops import upfirdn2d, grid_sample_gradfix, conv2d_gradfix
+except ImportError:
+    from torch_utils import persistence, misc
+    from torch_utils.ops import upfirdn2d, grid_sample_gradfix, conv2d_gradfix
+
 
 #----------------------------------------------------------------------------
 # Coefficients of various wavelet decomposition low-pass filters.

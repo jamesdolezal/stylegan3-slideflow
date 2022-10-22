@@ -20,12 +20,7 @@ import inspect
 import copy
 import uuid
 import types
-
-try:
-    from .. import dnnlib
-except (ValueError, ImportError):
-    # Error occurs when running script in StyleGAN3 directory
-    import dnnlib
+from typing import Any
 
 #----------------------------------------------------------------------------
 
@@ -34,6 +29,21 @@ _decorators         = set()     # {decorator_class, ...}
 _import_hooks       = []        # [hook_function, ...]
 _module_to_src_dict = dict()    # {module: src, ...}
 _src_to_module_dict = dict()    # {src: module, ...}
+
+class EasyDict(dict):
+    """Convenience class that behaves like a dict but allows access with the attribute syntax."""
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        self[name] = value
+
+    def __delattr__(self, name: str) -> None:
+        del self[name]
 
 #----------------------------------------------------------------------------
 
@@ -118,7 +128,7 @@ def persistent_class(orig_class):
 
         @property
         def init_kwargs(self):
-            return dnnlib.EasyDict(copy.deepcopy(self._init_kwargs))
+            return EasyDict(copy.deepcopy(self._init_kwargs))
 
         def __reduce__(self):
             fields = list(super().__reduce__())
@@ -185,8 +195,8 @@ def _reconstruct_persistent_obj(meta):
     r"""Hook that is called internally by the `pickle` module to unpickle
     a persistent object.
     """
-    meta = dnnlib.EasyDict(meta)
-    meta.state = dnnlib.EasyDict(meta.state)
+    meta = EasyDict(meta)
+    meta.state = EasyDict(meta.state)
     for hook in _import_hooks:
         meta = hook(meta)
         assert meta is not None
@@ -228,7 +238,12 @@ def _src_to_module(src):
         sys.modules[module_name] = module
         _module_to_src_dict[module] = src
         _src_to_module_dict[src] = module
-        exec(src, module.__dict__) # pylint: disable=exec-used
+        try:
+            exec(src, module.__dict__) # pylint: disable=exec-used
+        except Exception:
+            print("Exception in converting source to module! Module source:")
+            print(src)
+            raise
     return module
 
 #----------------------------------------------------------------------------

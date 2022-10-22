@@ -70,6 +70,7 @@ class Visualizer(imgui_window.ImguiWindow):
         self.button_w           = 0
         self.tile_px            = None
         self.tile_um            = None
+        self.pkl                = True
         self._gan_px            = gan_px
         self._gan_um            = gan_um
 
