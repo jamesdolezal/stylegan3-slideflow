@@ -32,8 +32,8 @@ import uuid
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
 
-#from .. import training
-#from ..training import augment, loss, networks, dataset
+from .. import training
+from ..training import augment, loss, networks_stylegan2, networks_stylegan3, dataset
 
 import_debug = False  # Prints log messages to debug import errors
 
