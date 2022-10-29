@@ -69,6 +69,9 @@ class PickleWidget:
         renderer.reset()
         self.viz.clear_result()
 
+    def drag_and_drop_hook(self, path, ignore_errors=False):
+        self.load(path, ignore_errors=ignore_errors)
+
     def load(self, pkl, ignore_errors=False):
         viz = self.viz
         viz.clear_result()

@@ -32,6 +32,10 @@ class StyleMixingWidget:
     def visible(self):
         return (hasattr(self.viz, 'pkl') and self.viz.pkl)
 
+    @property
+    def mixing(self):
+        return self.enable_mix_class or self.enable_mix_seed
+
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
@@ -74,7 +78,7 @@ class StyleMixingWidget:
                 _clicked, self.animate = imgui.checkbox('Anim', self.animate)
 
             imgui.same_line(pos2)
-            with imgui_utils.item_width(viz.button_w * 2 + viz.spacing), imgui_utils.grayed_out(num_ws == 0):
+            with imgui_utils.item_width(viz.button_w * 2 + viz.spacing), imgui_utils.grayed_out(num_ws == 0 or not self.mixing):
                 _changed, self.mix_frac = imgui.slider_float('##mix_fraction',
                                                     self.mix_frac,
                                                     min_value=0,
@@ -109,7 +113,7 @@ class StyleMixingWidget:
             self.content_height = 0
 
 
-        viz.args.mix_frac = self.mix_frac
+        viz.args.mix_frac = self.mix_frac if self.mixing else 0
         viz.args.mix_class = self.mix_class if self.enable_mix_class else -1
         if any(self.enables[:num_ws]):
             viz.args.stylemix_idx = [idx for idx, enable in enumerate(self.enables) if enable]

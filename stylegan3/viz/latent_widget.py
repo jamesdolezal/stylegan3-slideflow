@@ -21,6 +21,7 @@ class LatentWidget:
         self.latent_def = dnnlib.EasyDict(self.latent)
         self.class_idx  = -1
         self.step_y     = 100
+        self.viz.latent_widget = self
 
     @property
     def header(self):
@@ -35,6 +36,13 @@ class LatentWidget:
         self.latent.x += dx / viz.font_size * 4e-2
         self.latent.y += dy / viz.font_size * 4e-2
 
+    def set_seed(self, seed):
+        self.latent.x = seed
+        self.latent.y = 0
+
+    def set_class(self, class_idx):
+        self.class_idx = class_idx
+
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
         viz = self.viz
@@ -46,8 +54,7 @@ class LatentWidget:
             with imgui_utils.item_width(viz.font_size * 3):
                 changed, seed = imgui.input_int('##seed', seed, step=0)
                 if changed:
-                    self.latent.x = seed
-                    self.latent.y = 0
+                    self.set_seed(seed)
             imgui.same_line(viz.label_w + viz.font_size * 3 + viz.spacing)
             frac_x = self.latent.x - round(self.latent.x)
             frac_y = self.latent.y - round(self.latent.y)
