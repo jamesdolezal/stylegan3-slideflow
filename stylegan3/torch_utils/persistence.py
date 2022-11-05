@@ -21,6 +21,7 @@ import copy
 import uuid
 import types
 from typing import Any
+from .legacy_fix import apply_legacy_patch
 
 #----------------------------------------------------------------------------
 
@@ -241,9 +242,11 @@ def _src_to_module(src):
         try:
             exec(src, module.__dict__) # pylint: disable=exec-used
         except Exception:
-            print("Exception in converting source to module! Module source:")
-            print(src)
-            raise
+            try:
+                exec(apply_legacy_patch(src), module.__dict__) # pylint: disable=exec-used
+            except Exception:
+                print(src)
+                raise
     return module
 
 #----------------------------------------------------------------------------

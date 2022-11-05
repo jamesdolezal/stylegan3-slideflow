@@ -185,7 +185,7 @@ class Renderer:
         return res
 
     def preprocess(self, img, tile_px, tile_um):
-        """Preprocess a generated image for use with a model."""
+        """Preprocess a generated image (uint8) for use with a model."""
         img = sf.io.torch.whc_to_cwh(img)
         img = crop(
             img,
