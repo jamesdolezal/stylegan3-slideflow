@@ -61,19 +61,24 @@ def iterate_random_labels(opts, batch_size, stats):
         c = torch.zeros([batch_size, opts.G.c_dim], device=opts.device)
         while True:
             yield c
+    elif 'slideflow' in opts.dataset_kwargs.class_name:
+        if 'onehot' not in opts.dataset_kwargs:
+            opts.dataset_kwargs['onehot'] = True
+        dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs,
+                                                      rank=opts.rank,
+                                                      num_replicas=opts.num_gpus,
+                                                      infinite=False) # subclass of training.dataset.Dataset
+        dataset_len = dataset.num_tiles
+        dataset.max_size = stats.max_items
+        all_labels = list(dataset.labels.values())
+        n_labels = len(all_labels)
+        while True:
+            c = [all_labels[np.random.randint(n_labels)] for _i in range(batch_size)]
+            c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
+            yield c
     else:
-        if 'slideflow' in opts.dataset_kwargs.class_name:
-            slideflow_kwargs = {k:v for k,v in opts.slideflow_kwargs.items() if k not in ('model_type',)}
-            dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs,
-                                                        **slideflow_kwargs,
-                                                        rank=opts.rank,
-                                                        num_replicas=opts.num_gpus,
-                                                        infinite=False) # subclass of training.dataset.Dataset
-            dataset_len = dataset.num_tiles
-            dataset.max_size = stats.max_items
-        else:
-            dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
-            dataset_len = len(dataset)
+        dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+        dataset_len = len(dataset)
         while True:
             c = [dataset.get_label(np.random.randint(dataset_len)) for _i in range(batch_size)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
@@ -210,6 +215,8 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     if 'slideflow' in opts.dataset_kwargs.class_name:
         #TODO: Not sure if the seed needs to be re-applied here, should investigate
         num_workers = 1
+        if 'xflip' in opts.dataset_kwargs:
+            del opts.dataset_kwargs['xflip']
         dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs, rank=opts.rank, num_replicas=opts.num_gpus, infinite=False) # subclass of training.dataset.Dataset
     else:
         num_workers = 3
@@ -279,15 +286,15 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
         batch_gen = min(batch_size, 4)
     assert batch_size % batch_gen == 0
 
-    # Setup generator and labels.
-    G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
-    c_iter = iterate_random_labels(opts=opts, batch_size=batch_gen, stats=stats)
-
     # Initialize.
     stats = FeatureStats(**stats_kwargs)
     assert stats.max_items is not None
     progress = opts.progress.sub(tag='generator features', num_items=stats.max_items, rel_lo=rel_lo, rel_hi=rel_hi)
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
+
+    # Setup generator and labels.
+    G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
+    c_iter = iterate_random_labels(opts=opts, batch_size=batch_gen, stats=stats)
 
     # Main loop.
     while not stats.is_full():
