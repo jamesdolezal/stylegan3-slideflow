@@ -69,12 +69,14 @@ class PickleWidget:
         renderer.reset()
         self.viz.clear_result()
 
-    def drag_and_drop_hook(self, path, ignore_errors=False):
+    def drag_and_drop_hook(self, path, ignore_errors=False) -> bool:
         if path.endswith('pkl'):
-            self.load(path, ignore_errors=ignore_errors)
+            return self.load(path, ignore_errors=ignore_errors)
+        return False
 
-    def load(self, pkl, ignore_errors=False):
+    def load(self, pkl, ignore_errors=False) -> bool:
         viz = self.viz
+        success = False
         viz.clear_result()
         if hasattr(viz, 'close_slide'):
             viz.close_slide(now=False)
@@ -111,7 +113,9 @@ class PickleWidget:
                     self.viz.create_toast(f"Loaded GAN pkl at {pkl} (tile_px={gan_px}, tile_um={gan_um})", icon="success")
             elif hasattr(self.viz, 'create_toast'):
                 self.viz.create_toast(f"Loaded GAN pkl at {pkl}; unable to detect tile_px and tile_um", icon="warn")
+            success = True
         except:
+            success = False
             self.cur_pkl = None
             self.user_pkl = pkl
             if pkl == '':
@@ -126,6 +130,7 @@ class PickleWidget:
         except Exception:
             self.viz._gan_config = None
         self.viz._tex_obj = None
+        return success
 
     @imgui_utils.scoped_by_object_id
     def __call__(self, show=True):
