@@ -179,6 +179,12 @@ def init_slideflow_kwargs(path):
             labels=labels,
         )
 
+    # Normalizer
+    if 'normalizer_kwargs' in slideflow_kwargs:
+        label_kwargs.update(slideflow_kwargs['normalizer_kwargs'])
+        method = slideflow_kwargs['normalizer_kwargs']['normalizer']
+        print(f"Using {method} normalization.")
+
     training_set_kwargs = dnnlib.EasyDict(tfrecords=dataset.tfrecords(),
                                           img_size=slideflow_kwargs['tile_px'],
                                           use_labels=(labels is not None),
