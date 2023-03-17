@@ -24,7 +24,7 @@ from .gui_utils import imgui_utils
 from .gui_utils import gl_utils
 from .gui_utils import text_utils
 
-from slideflow.workbench import model_widget
+from slideflow.workbench.widgets import ModelWidget
 
 try:
     from . import dnnlib
@@ -82,11 +82,11 @@ class Visualizer(imgui_window.ImguiWindow):
         self.latent_widget      = latent_widget.LatentWidget(self)
         self.stylemix_widget    = stylemix_widget.StyleMixingWidget(self)
         self.trunc_noise_widget = trunc_noise_widget.TruncationNoiseWidget(self)
-        self.model_widget       = model_widget.ModelWidget(self, show_saliency=False)
         self.perf_widget        = performance_widget.PerformanceWidget(self)
         self.capture_widget     = capture_widget.CaptureWidget(self)
         self.layer_widget       = layer_widget.LayerWidget(self)
         self.eq_widget          = equivariance_widget.EquivarianceWidget(self)
+        self.model_widget       = ModelWidget(self, show_saliency=False)
 
         if capture_dir is not None:
             self.capture_widget.path = capture_dir
