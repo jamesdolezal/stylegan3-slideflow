@@ -24,7 +24,7 @@ from .gui_utils import imgui_utils
 from .gui_utils import gl_utils
 from .gui_utils import text_utils
 
-from slideflow.studio.widgets import ModelWidget
+from slideflow.workbench.model_widget import ModelWidget
 
 try:
     from . import dnnlib
