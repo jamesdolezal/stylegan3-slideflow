@@ -47,6 +47,22 @@ class CaptureSuccess(Exception):
 
 #----------------------------------------------------------------------------
 
+def get_device(device=None):
+    if device is None and torch.cuda.is_available():
+        return torch.device('cuda')
+    elif (device is None 
+          and hasattr(torch.backends, 'mps') 
+          and torch.backends.mps.is_available()):
+        return torch.device('mps')
+    elif device is None:
+        return torch.device('cpu')
+    elif isinstance(device, str):
+        return torch.device(device)
+    else:
+        return device
+
+#----------------------------------------------------------------------------
+
 def _sinc(x):
     y = (x * np.pi).abs()
     z = torch.sin(y) / y.clamp(1e-30, float('inf'))
@@ -147,14 +163,12 @@ def _apply_affine_transformation(x, mat, up=4, **filter_kwargs):
 class Renderer:
     def __init__(self, visualizer=None, gan_px=0, gan_um=0):
         self._visualizer        = visualizer
-        self._device            = torch.device('cuda')
+        self._device            = get_device()
         self._pkl_data          = dict()    # {pkl: dict | CapturedException, ...}
         self._networks          = dict()    # {cache_key: torch.nn.Module, ...}
         self._pinned_bufs       = dict()    # {(shape, dtype): torch.Tensor, ...}
         self._cmaps             = dict()    # {name: torch.Tensor, ...}
         self._is_timing         = False
-        self._start_event       = torch.cuda.Event(enable_timing=True)
-        self._end_event         = torch.cuda.Event(enable_timing=True)
         self._net_layers        = dict()    # {cache_key: [dnnlib.EasyDict, ...], ...}
         self._uq_thread         = None
         self._stop_uq_thread    = False
@@ -162,15 +176,26 @@ class Renderer:
         self.gan_px             = gan_px
         self.gan_um             = gan_um
 
+        # Only record stream if the device is CUDA,
+        # as the MPS device from MacOS does not yet support htis.
+        if self._device.type == 'cuda':
+            self._start_event   = torch.cuda.Event(enable_timing=True)
+            self._end_event     = torch.cuda.Event(enable_timing=True)
+        else:
+            self._start_event   = None
+            self._end_event     = None
+
     def render(self, **args):
-        self._is_timing = True
-        self._start_event.record(torch.cuda.current_stream(self._device))
+        if self._start_event is not None:
+            self._is_timing = True
+            self._start_event.record(torch.cuda.current_stream(self._device))
         res = dnnlib.EasyDict()
         try:
             self._render_impl(res, **args)
         except:
             res.error = CapturedException()
-        self._end_event.record(torch.cuda.current_stream(self._device))
+        if self._end_event is not None:
+            self._end_event.record(torch.cuda.current_stream(self._device))
         if 'image' in res:
             if not isinstance(res.image, np.ndarray):
                 res.image = self.to_cpu(res.image).numpy()
@@ -248,7 +273,9 @@ class Renderer:
         key = (tuple(ref.shape), ref.dtype)
         buf = self._pinned_bufs.get(key, None)
         if buf is None:
-            buf = torch.empty(ref.shape, dtype=ref.dtype).pin_memory()
+            buf = torch.empty(ref.shape, dtype=ref.dtype)
+            if self._device.type == 'cuda':
+                buf = buf.pin_memory()
             self._pinned_bufs[key] = buf
         return buf
 
