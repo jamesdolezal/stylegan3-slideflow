@@ -186,7 +186,9 @@ def init_slideflow_kwargs(path):
         method = slideflow_kwargs.normalizer_kwargs['normalizer']
         print(f"Using {method} normalization.")
 
-    if slideflow_kwargs.crop:
+    if slideflow_kwargs.resize:
+        final_size = slideflow_kwargs.resize
+    elif slideflow_kwargs.crop:
         final_size = slideflow_kwargs.crop
     else:
         final_size = slideflow_kwargs.tile_px
@@ -205,6 +207,7 @@ def init_slideflow_kwargs(path):
         use_labels=(labels is not None or has_tile_labels),
         max_size=None,
         crop=slideflow_kwargs.crop,
+        resize=slideflow_kwargs.resize,
         **label_kwargs
     )
     return training_set_kwargs, slideflow_kwargs, project.name
