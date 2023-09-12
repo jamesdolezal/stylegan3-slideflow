@@ -167,10 +167,11 @@ def init_slideflow_kwargs(path):
         outcome_labels = None
     slideflow_kwargs.outcome_labels = outcome_labels
 
-    if 'loc_labels' in slideflow_kwargs:
+    has_tile_labels = 'tile_labels' in slideflow_kwargs and slideflow_kwargs.tile_labels is not None
+    if has_tile_labels:
         label_kwargs = dict(
-            class_name='slideflow.io.torch.LocLabelInterleaver',
-            loc_labels=slideflow_kwargs['loc_labels'],
+            class_name='slideflow.io.torch.TileLabelInterleaver',
+            tile_labels=slideflow_kwargs.tile_labels,
             labels=None,
         )
     else:
@@ -181,24 +182,31 @@ def init_slideflow_kwargs(path):
 
     # Normalizer
     if 'normalizer_kwargs' in slideflow_kwargs:
-        label_kwargs.update(slideflow_kwargs['normalizer_kwargs'])
-        method = slideflow_kwargs['normalizer_kwargs']['normalizer']
+        label_kwargs.update(slideflow_kwargs.normalizer_kwargs)
+        method = slideflow_kwargs.normalizer_kwargs['normalizer']
         print(f"Using {method} normalization.")
 
-    training_set_kwargs = dnnlib.EasyDict(tfrecords=dataset.tfrecords(),
-                                          img_size=slideflow_kwargs['tile_px'],
-                                          use_labels=(labels is not None),
-                                          chunk_size=4,
-                                          augment='xyr',
-                                          standardize=False,
-                                          num_tiles=dataset.num_tiles,
-                                          prob_weights=dataset.prob_weights,
-                                          model_type=slideflow_kwargs['model_type'],
-                                          onehot=True,
-                                          **label_kwargs)
-    training_set_kwargs.resolution = slideflow_kwargs.tile_px
-    training_set_kwargs.use_labels = (labels is not None)
-    training_set_kwargs.max_size = None
+    if slideflow_kwargs.crop:
+        final_size = slideflow_kwargs.crop
+    else:
+        final_size = slideflow_kwargs.tile_px
+
+    training_set_kwargs = dnnlib.EasyDict(
+        tfrecords=dataset.tfrecords(),
+        img_size=final_size,
+        resolution=final_size,
+        chunk_size=4,
+        augment='xyr',
+        standardize=False,
+        num_tiles=dataset.num_tiles,
+        prob_weights=dataset.prob_weights,
+        model_type=slideflow_kwargs.model_type,
+        onehot=True,
+        use_labels=(labels is not None or has_tile_labels),
+        max_size=None,
+        crop=slideflow_kwargs.crop,
+        **label_kwargs
+    )
     return training_set_kwargs, slideflow_kwargs, project.name
 
 #----------------------------------------------------------------------------

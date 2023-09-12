@@ -19,6 +19,8 @@ import torch
 
 from .. import dnnlib
 
+SF_INTERLEAVERS = ['StyleGAN2Interleaver', 'TileLabelInterleaver']
+
 #----------------------------------------------------------------------------
 
 class MetricOptions:
@@ -245,7 +247,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
             return FeatureStats.load(cache_file)
 
     # Initialize.
-    if hasattr(dataset, '__len__') and dataset.__class__.__name__ != 'StyleGAN2Interleaver':
+    if hasattr(dataset, '__len__') and dataset.__class__.__name__ not in SF_INTERLEAVERS:
         num_items = len(dataset)
         if max_items is not None:
             num_items = min(num_items, max_items)
