@@ -28,7 +28,7 @@ from .torch_utils import custom_ops
 
 def load_project(sf_kwargs):
     import slideflow as sf
-    dataset_kwargs = {k:v for k,v in sf_kwargs.items() if k in ('tile_px', 'tile_um', 'filters', 'filter_blank')}
+    dataset_kwargs = {k:v for k,v in sf_kwargs.items() if k in ('tile_px', 'tile_um', 'filters', 'filter_blank', 'min_tiles')}
     project = sf.Project(sf_kwargs['project_path'])
     dataset = project.dataset(**dataset_kwargs)
     return project, dataset
