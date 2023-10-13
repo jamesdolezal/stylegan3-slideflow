@@ -205,7 +205,6 @@ def init_slideflow_kwargs(path):
         model_type=slideflow_kwargs.model_type,
         onehot=True,
         use_labels=(labels is not None or has_tile_labels),
-        max_size=None,
         crop=slideflow_kwargs.crop,
         resize=slideflow_kwargs.resize,
         **label_kwargs

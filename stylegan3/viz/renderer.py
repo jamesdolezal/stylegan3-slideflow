@@ -50,8 +50,8 @@ class CaptureSuccess(Exception):
 def get_device(device=None):
     if device is None and torch.cuda.is_available():
         return torch.device('cuda')
-    elif (device is None 
-          and hasattr(torch.backends, 'mps') 
+    elif (device is None
+          and hasattr(torch.backends, 'mps')
           and torch.backends.mps.is_available()):
         return torch.device('mps')
     elif device is None:
