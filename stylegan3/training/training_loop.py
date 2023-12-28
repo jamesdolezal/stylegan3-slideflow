@@ -149,7 +149,12 @@ def training_loop(
     torch.backends.cudnn.allow_tf32 = False             # Improves numerical accuracy.
     conv2d_gradfix.enabled = True                       # Improves training speed.
     grid_sample_gradfix.enabled = True                  # Avoids errors with the augmentation pipe.
+    
+    if loss_kwargs.train_histogan:
+        from slideflow.model import build_feature_extractor
+        feature_extractor = build_feature_extractor(loss_kwargs.feature_extractor, tile_px=512, device = device)
 
+    
     # Load training set.
     if rank == 0:
         print('Loading training set...')
@@ -248,7 +253,11 @@ def training_loop(
         print('Exporting sample images...')
         grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set, training_set_iterator=training_set_iterator)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
-        grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
+        if loss_kwargs.train_histogan:
+            grid_z = feature_extractor(images)
+            grid_z = grid_z.detach().to(device).split(batch_gpu)
+        else:
+            grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
         images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
@@ -379,8 +388,19 @@ def training_loop(
 
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
-            save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
+            if loss_kwargs.train_histogan:        
+                #need to showcase equivalent reals and fakes
+                grid_size, images, labels = setup_snapshot_image_grid(training_set=training_set, training_set_iterator=training_set_iterator)
+                save_image_grid(images, os.path.join(run_dir, f'reals{cur_nimg//1000:06d}.png'), drange=[0,255], grid_size=grid_size)
+                images = torch.from_numpy(images).to(torch.uint8).to(device)
+                grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
+                grid_z = feature_extractor(images)
+                grid_z = grid_z.detach().to(device).split(batch_gpu)
+                images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+                save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
+            else:
+                images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+                save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
         # Save network snapshot.
         snapshot_pkl = None
