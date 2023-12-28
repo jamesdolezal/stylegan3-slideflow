@@ -23,7 +23,7 @@ class Loss:
 #----------------------------------------------------------------------------
 
 class StyleGAN2Loss(Loss):
-    def __init__(self, device, G, D, augment_pipe=None, r1_gamma=10, style_mixing_prob=0, pl_weight=0, pl_batch_shrink=2, pl_decay=0.01, pl_no_weight_grad=False, blur_init_sigma=0, blur_fade_kimg=0):
+    def __init__(self, device, G, D, augment_pipe=None, r1_gamma=10, style_mixing_prob=0, pl_weight=0, pl_batch_shrink=2, pl_decay=0.01, pl_no_weight_grad=False, blur_init_sigma=0, blur_fade_kimg=0, train_histogan = False, feature_extractor = 'ctranspath', histo_lambda = 100):
         super().__init__()
         self.device             = device
         self.G                  = G
@@ -38,7 +38,13 @@ class StyleGAN2Loss(Loss):
         self.pl_mean            = torch.zeros([], device=device)
         self.blur_init_sigma    = blur_init_sigma
         self.blur_fade_kimg     = blur_fade_kimg
-
+        self.train_histogan = train_histogan
+        if train_histogan:
+            from slideflow.model import build_feature_extractor
+            self.feature_extractor = build_feature_extractor(feature_extractor, tile_px=512, device = device, force_uint8 = False, no_grad = False)
+            self.histo_lambda = histo_lambda
+            self.l1_loss = torch.nn.L1Loss().to(device)
+            
     def run_G(self, z, c, update_emas=False):
         ws = self.G.mapping(z, c, update_emas=update_emas)
         if self.style_mixing_prob > 0:
@@ -67,7 +73,8 @@ class StyleGAN2Loss(Loss):
         if self.r1_gamma == 0:
             phase = {'Dreg': 'none', 'Dboth': 'Dmain'}.get(phase, phase)
         blur_sigma = max(1 - cur_nimg / (self.blur_fade_kimg * 1e3), 0) * self.blur_init_sigma if self.blur_fade_kimg > 0 else 0
-
+        if self.train_histogan:
+            gen_z = self.feature_extractor(((real_img + 1)*127.5).requires_grad_())
         # Gmain: Maximize logits for generated images.
         if phase in ['Gmain', 'Gboth']:
             with torch.autograd.profiler.record_function('Gmain_forward'):
@@ -77,8 +84,13 @@ class StyleGAN2Loss(Loss):
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
                 loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
                 training_stats.report('Loss/G/loss', loss_Gmain)
+                loss_Gmain = loss_Gmain.mean()
+                if self.train_histogan:
+                    loss_l1_vector = self.histo_lambda * self.l1_loss(gen_z, self.feature_extractor(((gen_img + 1)*127.5).requires_grad_()))
+                    training_stats.report('Loss/scores/l1_vector', loss_l1_vector)
+                    loss_Gmain = loss_Gmain + loss_l1_vector.mean()
             with torch.autograd.profiler.record_function('Gmain_backward'):
-                loss_Gmain.mean().mul(gain).backward()
+                loss_Gmain.mul(gain).backward()
 
         # Gpl: Apply path length regularization.
         if phase in ['Greg', 'Gboth']:
