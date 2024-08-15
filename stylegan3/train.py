@@ -150,16 +150,16 @@ def init_slideflow_kwargs(path):
             slideflow_kwargs = dnnlib.EasyDict(**json.load(sf_args_f))
     except IOError as err:
         raise click.ClickException(f'--slideflow: {err}')
-    if slideflow_kwargs.model_type not in ('categorical', 'linear'):
-        raise click.ClickException(f'Unknown slideflow model type {slideflow_kwargs.model_type}, must be "categorical" or "linear"')
-    if slideflow_kwargs.model_type == 'linear':
-        raise ValueError("Unsupported outcome type for conditional network: linear")
+    if slideflow_kwargs.model_type not in ('classification', 'categorical', 'regression', 'linear'):
+        raise click.ClickException(f'Unknown slideflow model type {slideflow_kwargs.model_type}, must be "classification"/"categorical" or "regression"/"linear"')
+    if slideflow_kwargs.model_type in ('regression', 'linear'):
+        raise ValueError("Unsupported outcome type for conditional network: {}".format(slideflow_kwargs.model_type))
     project, dataset = load_project(slideflow_kwargs)
     outcome_key = 'outcomes' if 'outcomes' in slideflow_kwargs else 'outcome_label_headers'
     has_tile_labels = 'tile_labels' in slideflow_kwargs and slideflow_kwargs.tile_labels is not None
     if slideflow_kwargs[outcome_key] is not None:
-        labels, unique = dataset.labels(slideflow_kwargs[outcome_key], use_float=(slideflow_kwargs['model_type'] != 'categorical'))
-        if slideflow_kwargs.model_type == 'categorical':
+        labels, unique = dataset.labels(slideflow_kwargs[outcome_key], use_float=(slideflow_kwargs['model_type'] not in ('classification', 'categorical')))
+        if slideflow_kwargs.model_type in ('classification', 'categorical'):
             outcome_labels = dict(zip(range(len(unique)), unique))
         else:
             outcome_labels = None
