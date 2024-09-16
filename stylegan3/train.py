@@ -262,7 +262,10 @@ def default_kwargs(
     workers: int = 3,
     dry_run: bool = False,
     slideflow: Optional[str] = None,
-    lazy_resume: bool = False
+    lazy_resume: bool = False,
+    train_histogan = False,
+    feature_extractor = 'ctranspath',
+    histo_lambda = 100
 ):
     return dict(locals())
 
@@ -312,6 +315,11 @@ def train(ctx=None, **kwargs):
         c.training_set_kwargs.random_seed = opts.seed
     c.data_loader_kwargs.num_workers = opts.workers
 
+    # HistoGAN training arguments
+    c.loss_kwargs.train_histogan = opts.train_histogan
+    c.loss_kwargs.feature_extractor = opts.feature_extractor
+    c.loss_kwargs.histo_lambda = opts.histo_lambda
+    
     # Lazy resume.
     c.lazy_resume = bool(opts.lazy_resume)
 
